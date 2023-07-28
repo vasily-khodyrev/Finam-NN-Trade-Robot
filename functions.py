@@ -1,16 +1,29 @@
 import datetime
+import io
 import math
 import os
 import sys
 
+import aiohttp
+import aiomoex
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+import plotly.io
+from PIL import Image
+from plotly.subplots import make_subplots
 
-def get_timeframe_moex(tf, rv=False):
+
+def get_timeframe_moex(tf: str):
     """Функция получения типа таймфрейма в зависимости от направления"""
     # - целое число 1 (1 минута), 10 (10 минут), 60 (1 час), 24 (1 день), 7 (1 неделя), 31 (1 месяц) или 4 (1 квартал)
     tfs = {"M1": 1, "M10": 10, "H1": 60, "D1": 24, "W1": 7, "MN1": 31, "Q1": 4}
-    if rv: tfs = {1: "M1", 10: "M10", 60: "H1", 24: "D1", 7: "W1", 31: "MN1", 4: "Q1"}  # наоборот, если нужно )
     if tf in tfs: return tfs[tf]
     return False
+
+
+def transform_moex_to_needed_tf(tf: str, aggregation: int, src_df: pd.DataFrame) -> pd.DataFrame:
+    return 0
 
 
 def get_future_key(key, tf, future_tf):
@@ -24,7 +37,8 @@ def get_future_key(key, tf, future_tf):
     else:
         future_key = datetime.datetime.fromisoformat(key.strftime('%Y-%m-%d') + " 00:00")
 
-    tfs = {'M1': 1, 'M2': 2, 'M5': 5, 'M10': 10, 'M15': 15, 'M30': 30, 'H1': 60, 'H2': 120, 'H4': 240, 'D1': 1440, 'W1': False, 'MN1': False}
+    tfs = {'M1': 1, 'M2': 2, 'M5': 5, 'M10': 10, 'M15': 15, 'M30': 30, 'H1': 60, 'H2': 120, 'H4': 240, 'D1': 1440,
+           'W1': False, 'MN1': False}
 
     _k = tfs[tf]
     _k2 = tfs[future_tf]
@@ -107,13 +121,13 @@ class bcolors:
 
 def print_error_and_exit(_error, _error_code):
     '''Функция вывода ошибки и остановки программы'''
-    print(bcolors.FAIL+_error+bcolors.ENDC)
+    print(bcolors.FAIL + _error + bcolors.ENDC)
     exit(_error_code)
 
 
 def print_warning(_warning):
     '''Функция вывода предупреждения'''
-    print(bcolors.WARNING+_warning+bcolors.ENDC)
+    print(bcolors.WARNING + _warning + bcolors.ENDC)
 
 
 def join_paths(paths):
@@ -124,15 +138,15 @@ def join_paths(paths):
     return _folder
 
 
-def create_some_folders(timeframes, classes=None):
+def create_some_folders(timeframes, root_folder='NN', classes=None):
     """Функция создания необходимых директорий"""
-    folder = 'NN_winner'
+    folder = os.path.join(root_folder, f"NN_winner")
     if not os.path.exists(folder): os.makedirs(folder)
 
-    folder = 'csv'
+    folder = os.path.join(root_folder, f"csv")
     if not os.path.exists(folder): os.makedirs(folder)
 
-    folder = 'NN'
+    folder = root_folder
     if not os.path.exists(folder): os.makedirs(folder)
 
     for timeFrame in timeframes:
@@ -163,3 +177,133 @@ def stop_redirect_output_from_screen_to_file():
         sys.stdout.close()
     except:
         pass
+
+
+async def get_futures_candles(session, ticker: str, timeframe: str, start: str, end: str):
+    """Get candles for FUTURES from MOEX."""
+    tf = get_timeframe_moex(timeframe)
+    data = await aiomoex.get_market_candles(
+        session,
+        ticker,
+        interval=tf,
+        start=start,
+        end=end,
+        market="forts",
+        engine="futures"
+    )
+    df = pd.DataFrame(data)
+    df['datetime'] = pd.to_datetime(df['begin'], format='%Y-%m-%d %H:%M:%S')
+    # для M1, M10, H1 - приводим дату свечи в правильный вид
+    if tf in [1, 10, 60]:
+        df['datetime'] = df['datetime'].apply(lambda x: x + datetime.timedelta(minutes=tf))
+    df = df[["datetime", "open", "high", "low", "close", "volume"]].copy()
+    return df
+
+
+async def get_stock_candles(session: aiohttp.ClientSession, ticker: str, timeframe: str, start: str, end: str):
+    """Get stock candles for STOCKS from MOEX."""
+    tf = get_timeframe_moex(timeframe)
+    data = await aiomoex.get_market_candles(session, ticker, interval=tf, start=start, end=end)  # M10
+    df = pd.DataFrame(data)
+    #Check if data is present - return empty dataframe with columns
+    if df.empty:
+        return pd.DataFrame(data=None, columns=["datetime", "open", "high", "low", "close", "volume"])
+    df['datetime'] = pd.to_datetime(df['begin'], format='%Y-%m-%d %H:%M:%S')
+    # для M1, M10, H1 - приводим дату свечи в правильный вид
+    if tf in [1, 10, 60]:
+        df['datetime'] = df['datetime'].apply(lambda x: x + datetime.timedelta(minutes=tf))
+    df = df[["datetime", "open", "high", "low", "close", "volume"]].copy()
+    return df
+
+
+async def get_stock_candles_s(ticker: str, timeframe: str, start: str, end: str):
+    """Get stock candles for STOCKS from MOEX. New session is created"""
+    with aiohttp.ClientSession() as session:
+        return get_stock_candles(session, ticker, timeframe, start, end)
+
+
+def aggregate(df: pd.DataFrame, period_min: int) -> pd.DataFrame:
+    """Aggregate Функция получения стоковых свечей с MOEX."""
+    result = df.copy()
+    result['index_datetime'] = result['datetime'].apply(lambda x: x - datetime.timedelta(minutes=1))
+    result['datetime'] = pd.to_datetime(result['index_datetime'])
+    result["close"] = result["close"].astype(float)
+    result["open"] = result["open"].astype(float)
+    result["high"] = result["high"].astype(float)
+    result["volume"] = result["volume"].astype(float)
+    result.set_index('index_datetime', inplace=True)
+    freq = '' + str(period_min) + 'min'
+    result = result.groupby(pd.Grouper(freq=freq)).agg({'datetime': lambda x: __get_period_lambda(x, period_min),
+                                                        'open': 'first',
+                                                        'high': 'max',
+                                                        'low': 'min',
+                                                        'close': 'last',
+                                                        'volume': 'sum'})
+    result['datetime'] = result['datetime'].apply(lambda x: x + datetime.timedelta(minutes=period_min))
+    result.dropna(inplace=True)  # удаляем все NULL значения
+    result = result[["datetime", "open", "high", "low", "close", "volume"]].copy()
+    return result
+
+
+def __get_period_lambda(x, period):
+    if len(x) == 0:
+        return np.nan
+
+    tm = x[0]
+    if period <= 60:
+        tm = tm - datetime.timedelta(minutes=tm.minute % period,
+                                     seconds=tm.second,
+                                     microseconds=tm.microsecond)
+    else:
+        hours_div = period // 60
+        tm = tm - datetime.timedelta(hours=tm.hour % hours_div,
+                                     minutes=tm.minute,
+                                     seconds=tm.second,
+                                     microseconds=tm.microsecond)
+    return tm
+
+
+def get_vwma(df_in: pd.DataFrame, period_vwma_fast: int, period_vwma_slow: int) -> pd.DataFrame:
+    """Calculate Volume Weighted Moving Average"""
+    df = df_in.copy()
+    df['cv'] = df['close'] * df['volume']
+
+    df['cv_sum_fast'] = df['cv'].rolling(period_vwma_fast).sum()
+    df['volume_sum_fast'] = df['volume'].rolling(period_vwma_fast).sum()
+    df['vwma_fast'] = df['cv_sum_fast'] / df['volume_sum_fast'] # формируем VWMA fast
+
+    df['cv_sum_slow'] = df['cv'].rolling(period_vwma_slow).sum()
+    df['volume_sum_slow'] = df['volume'].rolling(period_vwma_slow).sum()
+    df['vwma_slow'] = df['cv_sum_slow'] / df['volume_sum_slow'] # формируем VWMA slow
+    df.dropna(inplace=True)  # удаляем все NULL значения
+    return df[["datetime", "open", "high", "low", "close", "volume", "vwma_fast", "vwma_slow"]].copy()
+
+
+def create_image(df: pd.DataFrame, show_scales: bool) -> Image:
+    hist = df.copy()
+    fig2 = make_subplots(specs=[[{"secondary_y": True}]])
+    max_volume = hist['volume'].max()
+    fig2.add_trace(go.Candlestick(x=hist.index,
+                                  open=hist['open'],
+                                  high=hist['high'],
+                                  low=hist['low'],
+                                  close=hist['close'],
+                                  ))
+    fig2.add_trace(go.Scatter(x=hist.index, y=hist['vwma_fast'], marker_color='blue', name='VWMA fast'))
+    fig2.add_trace(go.Scatter(x=hist.index, y=hist['vwma_slow'], marker_color='black', name='VWMA slow'))
+    fig2.add_trace(go.Bar(x=hist.index, y=hist['volume']), secondary_y=True)
+    fig2.update_yaxes(range=[0, max_volume*10], secondary_y=True)
+    fig2.update_yaxes(visible=False, secondary_y=True)
+    fig2.update_layout(margin=dict(l=0, r=0, b=0, t=0),
+                       xaxis_rangeslider_visible=False,
+                       autosize=False,
+                       width=512,
+                       height=512,
+                       plot_bgcolor='white',
+                       showlegend=False)
+    if not show_scales:
+        fig2.update_layout(yaxis={'visible': False, 'showticklabels': False},
+                           xaxis={'visible': False, 'showticklabels': False})
+    #fig2.show()
+    image_data = plotly.io.to_image(fig2, width=512, height=512, format="png")
+    return Image.open(io.BytesIO(image_data))

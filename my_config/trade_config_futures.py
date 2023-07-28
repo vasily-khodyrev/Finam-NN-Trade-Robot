@@ -9,7 +9,6 @@ class Config:
     security_board = "RFUD"  # класс тикеров
 
     # доступные M1, M10, H1
-    data_time_frames = ["M1", "M5", "M15", "M30"]  # timeframes to load data
     timeframe_0 = "M1"  # таймфрейм для обучения нейросети - вход и на этом же таймфрейме будем торговать
     timeframe_1 = "M10"  # таймфрейм для обучения нейросети - выход
     start = "2021-01-01"  # с какой даты загружаем исторические данные с MOEX
@@ -18,8 +17,8 @@ class Config:
     trading_hours_end = "23:50"  # время работы биржи - конец
 
     # параметры для отрисовки картинок
-    period_vwma_slow = 200  # период медленной SMA
-    period_vwma_fast = 100  # период быстрой SMA
+    period_sma_slow = 200  # период медленной SMA
+    period_sma_fast = 100  # период быстрой SMA
     draw_window = 256  # окно данных
     steps_skip = 16  # шаг сдвига окна данных
     draw_size = 256  # размер стороны квадратной картинки

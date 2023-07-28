@@ -47,6 +47,7 @@ class HackathonFinamStrategy:
 
     def __init__(
         self,
+        root_folder: str,
         ticker: str,
         timeframe: str,
         days_back: int,
@@ -58,6 +59,7 @@ class HackathonFinamStrategy:
         client_id: str,
     ):
         self.account_id = None
+        self.root_folder = root_folder
         self.ticker = ticker
         self.timeframe = timeframe
         self.days_back = days_back
@@ -229,12 +231,13 @@ class HackathonFinamStrategy:
         await self.main_cycle(model=model, fp_provider=fp_provider)  # запуск основного цикла стратегии
 
 
-async def run_strategy(portfolio, timeframe, days_back, check_interval, trading_hours_start, trading_hours_end, security_board, client_id):
+async def run_strategy(root_folder, portfolio, timeframe, days_back, check_interval, trading_hours_start, trading_hours_end, security_board, client_id):
     """Запускаем асинхронно стратегию для каждого тикера из портфеля."""
     async with aiohttp.ClientSession() as session:
         strategy_tasks = []
         for instrument in portfolio:
             strategy = HackathonFinamStrategy(  # формируем стратегию для тикера
+                root_folder=root_folder,
                 ticker=instrument,
                 timeframe=timeframe,
                 days_back=days_back,
@@ -252,6 +255,7 @@ async def run_strategy(portfolio, timeframe, days_back, check_interval, trading_
 if __name__ == "__main__":
 
     # применение настроек из config.py
+    root_folder = Config.root_folder  # основная папка для выходных данных
     portfolio = Config.portfolio  # тикеры по которым торгуем
     security_board = Config.security_board  # класс тикеров
     timeframe_0 = Config.timeframe_0  # таймфрейм на котором торгуем == таймфрейму на котором обучали нейросеть
@@ -270,6 +274,7 @@ if __name__ == "__main__":
     loop = asyncio.get_event_loop()  # создаем цикл
     task = loop.create_task(  # в цикл добавляем 1 задачу
         run_strategy(  # запуск стратегии
+            root_folder=root_folder,
             portfolio=portfolio,
             timeframe=timeframe_0,  # на каком таймфрейме торгуем
             days_back=days_back,

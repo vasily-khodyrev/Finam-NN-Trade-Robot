@@ -40,6 +40,7 @@ print("Num GPUs Available: ", len(config.list_physical_devices('GPU')))
 
 if __name__ == '__main__':  # Точка входа при запуске этого скрипта
 
+    root_folder = Config.root_folder  # основная папка для выходных данных
     # перенаправлять ли вывод с консоли в файл
     functions.start_redirect_output_from_screen_to_file(False, filename="3_results_of_training_neural_network.txt")
 
@@ -51,7 +52,7 @@ if __name__ == '__main__':  # Точка входа при запуске это
     # ================================================================================================================
 
     cur_run_folder = os.path.abspath(os.getcwd())  # текущий каталог
-    data_dir = os.path.join(os.path.join(cur_run_folder, "NN"), f"training_dataset_{timeframe_0}")  # каталог с данными
+    data_dir = os.path.join(os.path.join(cur_run_folder, root_folder), f"training_dataset_{timeframe_0}")  # каталог с данными
     num_classes = 2  # всего классов
     epochs = 40  # Количество эпох
     batch_size = 10  # Размер мини-выборки
@@ -132,7 +133,7 @@ if __name__ == '__main__':  # Точка входа при запуске это
     # val_ds = val_ds.map(lambda x, y: (normalization_layer(x), y))
 
     # для записи моделей
-    callbacks = [ModelCheckpoint(functions.join_paths([cur_run_folder, "NN", "_models", 'cnn_Open{epoch:1d}.hdf5'])),
+    callbacks = [ModelCheckpoint(functions.join_paths([cur_run_folder, root_folder, "_models", 'cnn_Open{epoch:1d}.hdf5'])),
                  # keras.callbacks.EarlyStopping(monitor='loss', patience=10),
                  ]
 

@@ -22,16 +22,9 @@ from my_config.trade_config import Config  # Файл конфигурации �
 async def get_candles(session, ticker, timeframes, start, end):
     """Функция получения свечей с MOEX."""
     for timeframe in timeframes:
-        tf = functions.get_timeframe_moex(timeframe)
-        data = await aiomoex.get_market_candles(session, ticker, interval=tf, start=start, end=end)  # M10
-        df = pd.DataFrame(data)
-        df['datetime'] = pd.to_datetime(df['begin'], format='%Y-%m-%d %H:%M:%S')
-        # для M1, M10, H1 - приводим дату свечи в правильный вид
-        if tf in [1, 10, 60]:
-            df['datetime'] = df['datetime'].apply(lambda x: x + timedelta(minutes=tf))
-        df = df[["datetime", "open", "high", "low", "close", "volume"]].copy()
+        df = functions.get_stock_candles(session, ticker, timeframe, start, end)
         df.to_csv(os.path.join("csv", f"{ticker}_{timeframe}.csv"), index=False, encoding='utf-8', sep=',')
-        print(f"{ticker} {tf}:")
+        print(f"{ticker} {timeframe}:")
         print(df)
 
 
@@ -47,6 +40,7 @@ async def get_all_historical_candles(portfolio, timeframes, start, end):
 if __name__ == "__main__":
 
     # применение настроек из config.py
+    root_folder = Config.root_folder  # основная папка для выходных данных
     portfolio = Config.portfolio  # тикеры по которым скачиваем исторические данные
     timeframe_0 = Config.timeframe_0  # таймфрейм для обучения нейросети - вход
     timeframe_1 = Config.timeframe_1  # таймфрейм для обучения нейросети - выход
@@ -54,7 +48,7 @@ if __name__ == "__main__":
     end = datetime.now().strftime("%Y-%m-%d")  # по сегодня
     
     # создаем необходимые каталоги
-    functions.create_some_folders(timeframes=[timeframe_0, timeframe_1])
+    functions.create_some_folders(timeframes=[timeframe_0, timeframe_1], root_folder=root_folder)
 
     # запуск асинхронного цикла получения исторических данных
     loop = asyncio.get_event_loop()  # создаем цикл

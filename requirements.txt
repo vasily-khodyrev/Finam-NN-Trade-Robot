@@ -4,3 +4,8 @@ pandas
 matplotlib
 tensorflow
 finam-trade-api
+plotly
+yfinance
+kaleido
+Pillow
+chevron

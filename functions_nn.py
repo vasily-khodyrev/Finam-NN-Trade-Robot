@@ -5,23 +5,30 @@ from PIL import Image, ImageDraw
 cur_run_folder = os.path.abspath(os.getcwd())  # текущий каталог
 
 
-def get_df_tf0(ticker, timeframe_0, period_sma_fast, period_sma_slow):
+def get_df_tf0(root_folder, ticker, timeframe_0, period_vwma_fast, period_vwma_slow):
     """Считываем данные для обучения нейросети - вход - timeframe_0"""
-    _filename = os.path.join(os.path.join(cur_run_folder, "csv"), f"{ticker}_{timeframe_0}.csv")
+    _filename = os.path.join(os.path.join(root_folder, "csv"), f"{ticker}_{timeframe_0}.csv")
     df = pd.read_csv(_filename, sep=',')  # , index_col='datetime')
     if timeframe_0 in ["M1", "M10", "H1"]:
         df['datetime'] = pd.to_datetime(df['datetime'], format='%Y-%m-%d %H:%M:%S')
     else:
         df['datetime'] = pd.to_datetime(df['datetime'], format='%Y-%m-%d')
-    df['sma_fast'] = df['close'].rolling(period_sma_fast).mean()  # формируем SMA fast
-    df['sma_slow'] = df['close'].rolling(period_sma_slow).mean()  # формируем SMA slow
+    df['cv'] = df['close'] * df['volume']
+
+    df['cv_sum_fast'] = df['cv'].rolling(period_vwma_fast).sum()
+    df['volume_sum_fast'] = df['volume'].rolling(period_vwma_fast).sum()
+    df['vwma_fast'] = df['cv_sum_fast'] / df['volume_sum_fast'] # формируем VWMA fast
+
+    df['cv_sum_slow'] = df['cv'].rolling(period_vwma_slow).sum()
+    df['volume_sum_slow'] = df['volume'].rolling(period_vwma_slow).sum()
+    df['vwma_slow'] = df['cv_sum_slow'] / df['volume_sum_slow'] # формируем VWMA slow
     df.dropna(inplace=True)  # удаляем все NULL значения
     return df.copy()
 
 
-def get_df_t1(ticker, timeframe_1):
+def get_df_t1(root_folder, ticker, timeframe_1):
     """Считываем данные для обучения нейросети - выход - timeframe_1"""
-    _filename = os.path.join(os.path.join(cur_run_folder, "csv"), f"{ticker}_{timeframe_1}.csv")
+    _filename = os.path.join(os.path.join(root_folder, "csv"), f"{ticker}_{timeframe_1}.csv")
     df = pd.read_csv(_filename, sep=',')  # , index_col='datetime')
     if timeframe_1 in ["M1", "M10", "H1"]:
         df['datetime'] = pd.to_datetime(df['datetime'], format='%Y-%m-%d %H:%M:%S')
@@ -30,7 +37,7 @@ def get_df_t1(ticker, timeframe_1):
     return df.copy()
 
 
-def generate_img(_sma_fast_list, _sma_slow_list, _closes_list, draw_window):
+def generate_img(_sma_fast_list: [], _sma_slow_list: [], _closes_list: [], draw_window: int) -> Image:
     """Генерация картинки для обучения/теста нейросети"""
     _max = max(max(_sma_fast_list), max(_sma_slow_list), max(_closes_list))
     _min = min(min(_sma_fast_list), min(_sma_slow_list), min(_closes_list))

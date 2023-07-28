@@ -1,0 +1,95 @@
+<html>
+
+<head>
+  <title>Scanner results {{scan_date}}</title>
+  <meta charset="utf-8">
+  <style>
+img {
+  border: 1px solid #ddd; /* Gray border */
+  border-radius: 4px;  /* Rounded border */
+  padding: 5px; /* Some padding */
+  width: 150px; /* Set a small width */
+}
+
+/* Add a hover effect (blue shadow) */
+img:hover {
+  box-shadow: 0 0 2px 1px rgba(0, 140, 186, 0.5);
+}
+
+table, th, td {
+  border: 1px solid;
+}
+
+
+.center-text {
+   text-align: center;
+}
+
+.green {
+    color: green;
+}
+
+.red {
+    color: red;
+}
+
+</style>
+</head>
+
+<body>
+<table>
+<tr>
+    <th>Total scanned</th>
+    <th>With data</th>
+    <th>Interesting</th>
+</tr>
+<tr>
+    <td>{{total_scanned}}</td>
+    <td>{{total_with_data}}</td>
+    <td>{{interesting_results}}</td>
+</tr>
+</table>
+<br>
+<table>
+<tr>
+    <th>Ticker</th>
+    <th>Description</th>
+
+    <th>H1</th>
+    <th>H4</th>
+    <th>D1</th>
+
+    <th>Potential H1</th>
+    <th>Potential H4</th>
+    <th>Potential D1</th>
+    <th>List Level</th>
+
+</tr>
+{{#scan_list}}
+<tr>
+   <td><a href="https://www.tradingview.com/chart/?symbol=MOEX:{{name}}">{{name}}</td>
+   <td>{{description}}</td>
+
+   <td class="center-text {{style_h1}}">
+        <a href="file://{{img_h1}}"><img width="128" height="128" src="file://{{img_h1}}"/></a>
+        <span>{{trend_h1}}</span>
+   </td>
+   <td class="center-text {{style_h4}}">
+        <a href="file://{{img_h4}}"><img width="128" height="128" src="file://{{img_h4}}"/></a>
+        <span>{{trend_h4}}</span>
+   </td>
+   <td class="center-text {{style_d1}}">
+        <a href="file://{{img_d1}}"><img width="128" height="128" src="file://{{img_d1}}"/></a>
+        <span>{{trend_d1}}</span>
+   </td>
+
+   <td>{{potential_h1}}</td>
+   <td>{{potential_h4}}</td>
+   <td>{{potential_d1}}</td>
+   <td>{{list_level}}</td>
+
+</tr>
+{{/scan_list}}
+</table>
+</body>
+</html>

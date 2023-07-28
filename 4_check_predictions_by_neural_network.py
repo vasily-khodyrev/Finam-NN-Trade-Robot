@@ -19,17 +19,18 @@ from my_config.trade_config import Config  # Файл конфигурации �
 
 if __name__ == "__main__":
 
+    root_folder = Config.root_folder  # основная папка для выходных данных
     timeframe_0 = Config.timeframe_0  # таймфрейм на котором торгуем == таймфрейму на котором обучали нейросеть
 
     # загружаем выбранную нами обученную нейросеть
-    model = load_model(os.path.join("NN_winner", "cnn_Open.hdf5"))
+    model = load_model(os.path.join(root_folder, "NN_winner", "cnn_Open.hdf5"))
     # Проверяем её архитектуру
     model.summary()
 
     # загружаем картинку для теста предсказания её класса
-    _path0 = functions.join_paths(["NN", f"training_dataset_{timeframe_0}", "0"])
+    _path0 = functions.join_paths([root_folder, f"training_dataset_{timeframe_0}", "0"])
     images_class_0 = [f for f in os.listdir(_path0) if os.path.isfile(os.path.join(_path0, f))]  # картинки класса 0
-    _path1 = functions.join_paths(["NN", f"training_dataset_{timeframe_0}", "1"])
+    _path1 = functions.join_paths([root_folder, f"training_dataset_{timeframe_0}", "1"])
     images_class_1 = [f for f in os.listdir(_path1) if os.path.isfile(os.path.join(_path1, f))]  # картинки класса 1
 
     images_class_0 = images_class_0[:10]  # оставляем первые 10
