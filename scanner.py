@@ -150,7 +150,6 @@ def get_change_trend(trend: Trend) -> Trend:
 def get_potential(dataset: pd.DataFrame):
     count = 0
     cur_trend = None
-    # TODO: need to iterate from last to the first
     reversed_dataset = dataset.iloc[::-1]
     for date, close, fast, slow in zip(reversed_dataset["datetime"], reversed_dataset["close"], reversed_dataset["vwma_fast"],
                                        reversed_dataset["vwma_slow"]):
