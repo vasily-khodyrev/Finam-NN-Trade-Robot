@@ -175,9 +175,9 @@ def get_potential(dataset: pd.DataFrame):
     return cur_trend, interest, potential
 
 
-def get_state(security: ISSSecurity, tf: str, data_h1_vwma: pd.DataFrame) -> AssetState:
-    dataset = data_h1_vwma.tail(256)
-    has_data = not data_h1_vwma.empty
+def get_state(security: ISSSecurity, tf: str, data_vwma: pd.DataFrame) -> AssetState:
+    dataset = data_vwma.tail(256)
+    has_data = not data_vwma.empty
     trend = None
     interest = False
     potential = 0.0
@@ -197,7 +197,7 @@ async def get_security_state(session: aiohttp.ClientSession, security: ISSSecuri
     data_h1 = await functions.get_stock_candles(session, security.get_ticker(), "H1", from_h1_date, None)
     data_h4 = pd.DataFrame()
     if not data_h1.empty:
-        data_h4 = functions.aggregate(data_d1, 240)
+        data_h4 = functions.aggregate(data_h1, 240)
     data_h1_vwma = pd.DataFrame()
     data_h4_vwma = pd.DataFrame()
     data_d1_vwma = pd.DataFrame()
