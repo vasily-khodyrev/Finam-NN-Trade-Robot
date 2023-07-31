@@ -165,10 +165,11 @@ def get_potential(dataset: pd.DataFrame):
     last_row = dataset.tail(1)
     last_close = last_row["close"].tolist()[0]
     last_vwma_fast = last_row["vwma_fast"].tolist()[0]
-    if (cur_trend == Trend.UP or cur_trend == Trend.CHG_UP) and last_close < last_vwma_fast:
+    last_vwma_slow = last_row["vwma_slow"].tolist()[0]
+    if last_vwma_fast > last_vwma_slow >= last_close:
         interest = True
         potential = (last_vwma_fast - last_close) / last_close * 100
-    if (cur_trend == Trend.DOWN or cur_trend == Trend.CHG_DOWN) and last_close > last_vwma_fast:
+    if last_close >= last_vwma_slow > last_vwma_fast:
         interest = True
         potential = (last_close - last_vwma_fast) / last_close * 100
     return cur_trend, interest, potential
@@ -265,6 +266,7 @@ def print_scanner_results(results: List[ScannerResult]):
     out_file = open(out_file_path, "w", encoding="utf-8")
     n = out_file.write(output)
     out_file.close()
+    print(f"Found {interesting_results_count} interesting results\n")
     print(f"Result is written to {out_file_path}")
 
 
