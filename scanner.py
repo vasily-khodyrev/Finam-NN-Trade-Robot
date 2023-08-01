@@ -169,9 +169,6 @@ def get_potential(dataset: pd.DataFrame):
     if last_vwma_fast > last_vwma_slow >= last_close:
         interest = True
         potential = (last_vwma_fast - last_close) / last_close * 100
-    if last_close >= last_vwma_slow > last_vwma_fast:
-        interest = True
-        potential = (last_close - last_vwma_fast) / last_close * 100
     return cur_trend, interest, potential
 
 
@@ -202,11 +199,11 @@ async def get_security_state(session: aiohttp.ClientSession, security: ISSSecuri
     data_h4_vwma = pd.DataFrame()
     data_d1_vwma = pd.DataFrame()
     if not data_h1.empty:
-        data_h1_vwma = functions.get_vwma(data_h1, 100, 200)
+        data_h1_vwma = functions.get_vwma(data_h1, 50, 100, 200)
     if not data_h4.empty:
-        data_h4_vwma = functions.get_vwma(data_h4, 100, 200)
+        data_h4_vwma = functions.get_vwma(data_h4, 50, 100, 200)
     if not data_d1.empty:
-        data_d1_vwma = functions.get_vwma(data_d1, 100, 200)
+        data_d1_vwma = functions.get_vwma(data_d1, 50, 100, 200)
     return ScannerResult(security,
                          get_state(security, "H1", data_h1_vwma),
                          get_state(security, "H4", data_h4_vwma),
@@ -214,7 +211,7 @@ async def get_security_state(session: aiohttp.ClientSession, security: ISSSecuri
 
 
 def print_scanner_results(results: List[ScannerResult]):
-    scan_date = datetime.datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
+    scan_date = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
     results_count = len(results)
     parent_dir = os.path.join("_scan", "out")  # os.path.join("_scan", scan_date)
     if not os.path.exists(parent_dir): os.makedirs(parent_dir)

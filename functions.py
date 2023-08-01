@@ -263,10 +263,14 @@ def __get_period_lambda(x, period):
     return tm
 
 
-def get_vwma(df_in: pd.DataFrame, period_vwma_fast: int, period_vwma_slow: int) -> pd.DataFrame:
+def get_vwma(df_in: pd.DataFrame, period_vwma_vfast: int, period_vwma_fast: int, period_vwma_slow: int) -> pd.DataFrame:
     """Calculate Volume Weighted Moving Average"""
     df = df_in.copy()
     df['cv'] = df['close'] * df['volume']
+
+    df['cv_sum_vfast'] = df['cv'].rolling(period_vwma_vfast).sum()
+    df['volume_sum_vfast'] = df['volume'].rolling(period_vwma_vfast).sum()
+    df['vwma_vfast'] = df['cv_sum_vfast'] / df['volume_sum_vfast']  # формируем VWMA very fast
 
     df['cv_sum_fast'] = df['cv'].rolling(period_vwma_fast).sum()
     df['volume_sum_fast'] = df['volume'].rolling(period_vwma_fast).sum()
@@ -276,7 +280,7 @@ def get_vwma(df_in: pd.DataFrame, period_vwma_fast: int, period_vwma_slow: int) 
     df['volume_sum_slow'] = df['volume'].rolling(period_vwma_slow).sum()
     df['vwma_slow'] = df['cv_sum_slow'] / df['volume_sum_slow'] # формируем VWMA slow
     df.dropna(inplace=True)  # удаляем все NULL значения
-    return df[["datetime", "open", "high", "low", "close", "volume", "vwma_fast", "vwma_slow"]].copy()
+    return df[["datetime", "open", "high", "low", "close", "volume", "vwma_vfast", "vwma_fast", "vwma_slow"]].copy()
 
 
 def create_image(df: pd.DataFrame, show_scales: bool) -> Image:
@@ -289,6 +293,7 @@ def create_image(df: pd.DataFrame, show_scales: bool) -> Image:
                                   low=hist['low'],
                                   close=hist['close'],
                                   ))
+    fig2.add_trace(go.Scatter(x=hist.index, y=hist['vwma_vfast'], marker_color='purple', name='VWMA very fast'))
     fig2.add_trace(go.Scatter(x=hist.index, y=hist['vwma_fast'], marker_color='blue', name='VWMA fast'))
     fig2.add_trace(go.Scatter(x=hist.index, y=hist['vwma_slow'], marker_color='black', name='VWMA slow'))
     fig2.add_trace(go.Bar(x=hist.index, y=hist['volume']), secondary_y=True)
