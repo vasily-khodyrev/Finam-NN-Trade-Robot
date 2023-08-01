@@ -284,6 +284,12 @@ async def stock_screen():
 
 
 if __name__ == "__main__":
+
+    # make script location to become working directory
+    abspath = os.path.abspath(__file__)
+    dir_name = os.path.dirname(abspath)
+    os.chdir(dir_name)
+
     loop = asyncio.get_event_loop()  # создаем цикл
     task = loop.create_task(  # в цикл добавляем 1 задачу
         stock_screen()
