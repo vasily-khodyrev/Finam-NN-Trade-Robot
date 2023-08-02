@@ -3,6 +3,7 @@ import io
 import math
 import os
 import sys
+from typing import Optional
 
 import aiohttp
 import aiomoex
@@ -263,24 +264,36 @@ def __get_period_lambda(x, period):
     return tm
 
 
-def get_vwma(df_in: pd.DataFrame, period_vwma_vfast: int, period_vwma_fast: int, period_vwma_slow: int) -> pd.DataFrame:
+def get_vwma(df_in: pd.DataFrame,
+             period_vwma_vfast: Optional[int] = None,
+             period_vwma_fast: Optional[int] = None,
+             period_vwma_slow: Optional[int] = None) -> pd.DataFrame:
     """Calculate Volume Weighted Moving Average"""
     df = df_in.copy()
     df['cv'] = df['close'] * df['volume']
 
-    df['cv_sum_vfast'] = df['cv'].rolling(period_vwma_vfast).sum()
-    df['volume_sum_vfast'] = df['volume'].rolling(period_vwma_vfast).sum()
-    df['vwma_vfast'] = df['cv_sum_vfast'] / df['volume_sum_vfast']  # формируем VWMA very fast
+    result_columns = ["datetime", "open", "high", "low", "close", "volume"]
 
-    df['cv_sum_fast'] = df['cv'].rolling(period_vwma_fast).sum()
-    df['volume_sum_fast'] = df['volume'].rolling(period_vwma_fast).sum()
-    df['vwma_fast'] = df['cv_sum_fast'] / df['volume_sum_fast'] # формируем VWMA fast
+    if period_vwma_vfast is not None:
+        df['cv_sum_vfast'] = df['cv'].rolling(period_vwma_vfast).sum()
+        df['volume_sum_vfast'] = df['volume'].rolling(period_vwma_vfast).sum()
+        df['vwma_vfast'] = df['cv_sum_vfast'] / df['volume_sum_vfast']  # формируем VWMA very fast
+        result_columns.append("vwma_vfast")
 
-    df['cv_sum_slow'] = df['cv'].rolling(period_vwma_slow).sum()
-    df['volume_sum_slow'] = df['volume'].rolling(period_vwma_slow).sum()
-    df['vwma_slow'] = df['cv_sum_slow'] / df['volume_sum_slow'] # формируем VWMA slow
+    if period_vwma_fast is not None:
+        df['cv_sum_fast'] = df['cv'].rolling(period_vwma_fast).sum()
+        df['volume_sum_fast'] = df['volume'].rolling(period_vwma_fast).sum()
+        df['vwma_fast'] = df['cv_sum_fast'] / df['volume_sum_fast'] # формируем VWMA fast
+        result_columns.append("vwma_fast")
+
+    if period_vwma_slow is not None:
+        df['cv_sum_slow'] = df['cv'].rolling(period_vwma_slow).sum()
+        df['volume_sum_slow'] = df['volume'].rolling(period_vwma_slow).sum()
+        df['vwma_slow'] = df['cv_sum_slow'] / df['volume_sum_slow'] # формируем VWMA slow
+        result_columns.append("vwma_slow")
+
     df.dropna(inplace=True)  # удаляем все NULL значения
-    return df[["datetime", "open", "high", "low", "close", "volume", "vwma_vfast", "vwma_fast", "vwma_slow"]].copy()
+    return df[result_columns].copy()
 
 
 def create_image(df: pd.DataFrame, show_scales: bool) -> Image:
