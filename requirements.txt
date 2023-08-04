@@ -9,3 +9,8 @@ yfinance
 kaleido
 Pillow
 chevron
+sklearn
+scikit-learn
+scipy
+keras
+numpy

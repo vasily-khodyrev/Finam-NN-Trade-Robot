@@ -3,10 +3,11 @@ import io
 import math
 import os
 import sys
-from typing import Optional
+from typing import Optional, Tuple, Callable
 
 import aiohttp
 import aiomoex
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
@@ -180,7 +181,7 @@ def stop_redirect_output_from_screen_to_file():
         pass
 
 
-async def get_futures_candles(session, ticker: str, timeframe: str, start: str, end: str):
+async def get_futures_candles(session, ticker: str, timeframe: str, start: str, end: Optional[str] = None):
     """Get candles for FUTURES from MOEX."""
     tf = get_timeframe_moex(timeframe)
     data = await aiomoex.get_market_candles(
@@ -201,7 +202,18 @@ async def get_futures_candles(session, ticker: str, timeframe: str, start: str, 
     return df
 
 
-async def get_stock_candles(session: aiohttp.ClientSession, ticker: str, timeframe: str, start: str, end: str):
+async def get_futures_candles_s(ticker: str, timeframe: str, start: str, end: Optional[str] = None):
+    """Get stock candles for STOCKS from MOEX. New session is created"""
+    with aiohttp.ClientSession() as session:
+        data = get_futures_candles(session, ticker, timeframe, start, end)
+    return data
+
+
+async def get_stock_candles(session: aiohttp.ClientSession,
+                            ticker: str,
+                            timeframe: str,
+                            start: str,
+                            end: Optional[str] = None):
     """Get stock candles for STOCKS from MOEX."""
     tf = get_timeframe_moex(timeframe)
     data = await aiomoex.get_market_candles(session, ticker, interval=tf, start=start, end=end)  # M10
@@ -217,7 +229,7 @@ async def get_stock_candles(session: aiohttp.ClientSession, ticker: str, timefra
     return df
 
 
-async def get_stock_candles_s(ticker: str, timeframe: str, start: str, end: str):
+async def get_stock_candles_s(ticker: str, timeframe: str, start: str, end: Optional[str] = None):
     """Get stock candles for STOCKS from MOEX. New session is created"""
     with aiohttp.ClientSession() as session:
         return get_stock_candles(session, ticker, timeframe, start, end)
@@ -293,7 +305,7 @@ def get_vwma(df_in: pd.DataFrame,
         result_columns.append("vwma_slow")
 
     df.dropna(inplace=True)  # удаляем все NULL значения
-    return df[result_columns].copy()
+    return df[result_columns].reset_index(drop=True).copy()
 
 
 def create_image(df: pd.DataFrame, show_scales: bool) -> Image:
@@ -325,3 +337,183 @@ def create_image(df: pd.DataFrame, show_scales: bool) -> Image:
     #fig2.show()
     image_data = plotly.io.to_image(fig2, width=512, height=512, format="png")
     return Image.open(io.BytesIO(image_data))
+
+
+def load_candles(file_path: str) -> pd.DataFrame:
+    df = pd.read_csv(file_path, sep=',')
+    df['datetime'] = pd.to_datetime(df['datetime'], format='%Y-%m-%d %H:%M:%S')
+    return df
+
+
+def evaluate(df: pd.DataFrame,
+             idx: int,
+             len_check: int,
+             max_profit: float = 0.005,
+             max_loss: float = 0.001,
+             ) -> list[float]:
+    """
+        Evaluates data starting from idx and say whether "close" data will go Up or Down
+        (with provided max_profit and loss criteria)
+        len_check - how many next items should be checked (at max - since event may happen earlier)
+        Return: In case of UP - [1,0]
+                In case of DOWN - [0,1]
+                In other cases [0,0]
+    """
+    _max_idx = df.last_valid_index()
+    _max_len = len_check
+    _max_profit = max_profit
+    _max_loss = max_loss
+    prev_close = df.at[idx - 1, "close"]
+    up_max_profit_price = prev_close * (1 + _max_profit)
+    up_max_loss_price = prev_close * (1 - _max_loss)
+    down_max_profit_price = prev_close * (1 - _max_profit)
+    down_max_loss_price = prev_close * (1 + _max_loss)
+    no_up = False
+    no_down = False
+    for i in range(idx, idx + _max_len):
+        if i > _max_idx:
+            return [0.0, 0.0]
+
+        cur_high = df.at[i, "high"]
+        cur_low = df.at[i, "low"]
+        if no_up and no_down:
+            return [0.0, 0.0]
+        if not no_up and cur_low <= up_max_loss_price:
+            no_up = True
+        if not no_down and cur_high >= down_max_loss_price:
+            no_down = True
+        if not no_up and cur_high > up_max_profit_price:
+            return [1.0, 0.0]
+        if not no_down and cur_low < down_max_profit_price:
+            return [0.0, 1.0]
+    return [0.0, 0.0]
+
+
+def prepare_data_and_eval(df: pd.DataFrame,
+                          idx: int,
+                          window_size: int,
+                          look_forward: int,
+                          evaluator: Callable[[pd.DataFrame, int, int], list[float]],
+                          has_vfast_vwma: Optional[bool] = False,
+                          has_fast_vwma: Optional[bool] = False,
+                          has_slow_vwma: Optional[bool] = False,
+                          ) -> Optional[Tuple[list[float], list[float]]]:
+    """
+        Provides prepared data for neural network:
+           - Gets "window_size" rows till "idx" in DataFrame
+           - Normalizes values (divide by max open value)
+           - Gets evaluation in the future (using "evaluator" function)
+           - has_vfast_vwma, has_fast_vwma, has_slow_vwma indicates on whether we need to include
+           corresponding vwma values in the result
+        Returns:
+            Array with 2 items: normalized data + evaluation
+            or None in case there's not enough data starting from index "idx"
+
+    """
+    values = prepare_data(df, idx, window_size, has_vfast_vwma, has_fast_vwma, has_slow_vwma)
+    if values is None:
+        return None
+    _eval = evaluator(df, idx + 1, look_forward)
+    return values, _eval
+
+
+def prepare_data(df: pd.DataFrame,
+                 idx: int,
+                 window_size: int,
+                 has_vfast_vwma: Optional[bool] = False,
+                 has_fast_vwma: Optional[bool] = False,
+                 has_slow_vwma: Optional[bool] = False,
+                 ) -> Optional[list[float]]:
+    """
+        Provides prepared data for neural network:
+           - Gets "window_size" rows starting from "idx" in DataFrame
+           - Normalizes values (divide by max open value)
+           - has_vfast_vwma, has_fast_vwma, has_slow_vwma indicates on whether we need to include
+           corresponding vwma values in the result
+        Returns:
+            Array of normalized data or None in case there's not enough data starting from index "idx"
+
+    """
+    #print(f"select range from {idx} to {idx + window_size - 1}")
+    columns = ["open", "close", "low", "high", "volume"]
+    if has_vfast_vwma:
+        columns.append("vwma_vfast")
+    if has_fast_vwma:
+        columns.append("vwma_fast")
+    if has_slow_vwma:
+        columns.append("vwma_slow")
+    print(df)
+    dfRange = df.iloc[:idx + 1][columns].tail(window_size).copy()
+    if len(dfRange) != window_size:
+        return None
+    _max = dfRange["open"].max()
+    print(dfRange)
+    dfRange["open"] = dfRange["open"] / _max
+    dfRange["close"] = dfRange["close"] / _max
+    dfRange["low"] = dfRange["low"] / _max
+    dfRange["high"] = dfRange["high"] / _max
+    dfRange["volume"] = dfRange["volume"] / _max
+    if has_vfast_vwma:
+        dfRange["vwma_vfast"] = dfRange["vwma_vfast"] / _max
+    if has_fast_vwma:
+        dfRange["vwma_fast"] = dfRange["vwma_fast"] / _max
+    if has_slow_vwma:
+        dfRange["vwma_slow"] = dfRange["vwma_slow"] / _max
+    #print(f"select range from {idx} to {idx + window_size - 1} AFTER NORMALIZATION")
+    #print(dfRange)
+    values = dfRange.values.flatten().tolist()
+    return values
+
+
+# Print iterations progress
+def printProgressBar(iteration: int,
+                     total:int,
+                     prefix:str = '',
+                     suffix:str = '',
+                     decimals = 1, length = 100, fill = '█', printEnd = "\r"):
+    """
+    Call in a loop to create terminal progress bar
+    @params:
+        iteration   - Required  : current iteration (Int)
+        total       - Required  : total iterations (Int)
+        prefix      - Optional  : prefix string (Str)
+        suffix      - Optional  : suffix string (Str)
+        decimals    - Optional  : positive number of decimals in percent complete (Int)
+        length      - Optional  : character length of bar (Int)
+        fill        - Optional  : bar fill character (Str)
+        printEnd    - Optional  : end character (e.g. "\r", "\r\n") (Str)
+    """
+    percent = ("{0:." + str(decimals) + "f}").format(100 * (iteration / float(total)))
+    filledLength = int(length * iteration // total)
+    bar = fill * filledLength + '-' * (length - filledLength)
+    print(f'\r{prefix} |{bar}| {percent}% {suffix}', end = printEnd)
+    # Print New Line on Complete
+    if iteration == total:
+        print()
+
+
+def show_train_history(history, epochs: int, filename: Optional[str]):
+    # графики потерь и точности на обучающих и проверочных наборах
+    acc = history.history['accuracy']
+    val_acc = history.history['val_accuracy']
+
+    loss = history.history['loss']
+    val_loss = history.history['val_loss']
+
+    epochs_range = range(epochs)
+
+    plt.figure(figsize=(8, 8))
+    plt.subplot(1, 2, 1)
+    plt.plot(epochs_range, acc, label='Training Accuracy')
+    plt.plot(epochs_range, val_acc, label='Validation Accuracy')
+    plt.legend(loc='lower right')
+    plt.title('Training and Validation Accuracy')
+
+    plt.subplot(1, 2, 2)
+    plt.plot(epochs_range, loss, label='Training Loss')
+    plt.plot(epochs_range, val_loss, label='Validation Loss')
+    plt.legend(loc='upper right')
+    plt.title('Training and Validation Loss')
+    if filename is not None:
+        plt.savefig(filename, dpi=150)
+    plt.show()

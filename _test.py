@@ -28,12 +28,26 @@ def wma(df, period_sma_fast, period_sma_slow):
 
 
 def check_wma():
-    df = pd.DataFrame({'close':np.arange(11), 'volume': random.randrange(1, 11)})
-    df = wma(df, 1, 2)
-    print(df)
+    ticker = "SiU3"
+    tf = "M10"
+    _filename = os.path.join(os.path.join("NN_futures", "csv"), f"{ticker}_{tf}.csv")
+    df = pd.read_csv(_filename, sep=',')  # , index_col='datetime')
+    if tf in ["M1", "M10", "H1"]:
+        df['datetime'] = pd.to_datetime(df['datetime'], format='%Y-%m-%d %H:%M:%S')
+    dataset = df.tail(5)
+    period = 3
+    print("Initial data:")
+    print(dataset)
+    data_with_vwma = functions.get_vwma(dataset, period_vwma_fast=period)
+    print(f"Result with period={period}:")
+    print(data_with_vwma)
 
 
 def check_plot_creation():
+    ticker = "SiU3"
+    tf = "M10"
+    _filename = os.path.join(os.path.join("NN_futures", "csv"), f"{ticker}_{tf}.csv")
+    df = pd.read_csv(_filename, sep=',')  # , index_col='datetime')
     tsla = yfinance.Ticker('TSLA')
     hist = tsla.history(period='1y')
     hist = wma(hist, 10, 20)
@@ -153,9 +167,9 @@ def check_comparators():
     pass
 
 
-#check_wma()
+check_wma()
 #check_aggregation()
 #check_plot_creation()
-check_comparators()
+#check_comparators()
 
 
