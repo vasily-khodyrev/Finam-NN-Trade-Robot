@@ -61,7 +61,7 @@ class AssetState:
         return self._status
 
     def get_trend(self) -> str:
-        return self._trend.name
+        return self._trend.name if self._trend is not None else "None"
 
     def get_image(self) -> Image:
         return self._image
@@ -97,12 +97,14 @@ class ScannerResult:
                  last_price: Optional[float],
                  h1_state: AssetState,
                  h4_state: AssetState,
-                 d1_state: AssetState):
+                 d1_state: AssetState,
+                 w1_state: AssetState):
         self._security = security
         self._last_price = last_price
         self._h1_state = h1_state
         self._h4_state = h4_state
         self._d1_state = d1_state
+        self._w1_state = w1_state
 
     def get_security(self) -> ISSSecurity:
         return self._security
@@ -115,6 +117,9 @@ class ScannerResult:
 
     def get_d1_state(self) -> AssetState:
         return self._d1_state
+
+    def get_w1_state(self) -> AssetState:
+        return self._w1_state
 
     def get_last_price(self) -> str:
         return "-" if self._last_price is None else "{:.2f}".format(self._last_price)
@@ -199,8 +204,11 @@ async def get_security_state(session: aiohttp.ClientSession, security: ISSSecuri
     from_h1_date = (datetime.datetime.now() - datetime.timedelta(days=150)).strftime("%Y-%m-%d")
     # 1 year for 1D
     from_d1_date = (datetime.datetime.now() - datetime.timedelta(days=365)).strftime("%Y-%m-%d")
+    # 8 years for 1W
+    from_w1_date = (datetime.datetime.now() - datetime.timedelta(days=365*8)).strftime("%Y-%m-%d")
     data_d1 = await functions.get_stock_candles(session, security.get_ticker(), "D1", from_d1_date, None)
     data_h1 = await functions.get_stock_candles(session, security.get_ticker(), "H1", from_h1_date, None)
+    data_w1 = await functions.get_stock_candles(session, security.get_ticker(), "W1", from_w1_date, None)
     data_h4 = pd.DataFrame()
     last_price = None
     if not data_h1.empty:
@@ -209,18 +217,22 @@ async def get_security_state(session: aiohttp.ClientSession, security: ISSSecuri
     data_h1_vwma = pd.DataFrame()
     data_h4_vwma = pd.DataFrame()
     data_d1_vwma = pd.DataFrame()
+    data_w1_vwma = pd.DataFrame()
     if not data_h1.empty:
-        data_h1_vwma = functions.get_vwma(data_h1, 50, 100, 200)
+        data_h1_vwma = functions.get_vwma(data_h1, 50, 100, 200, drop_nan=False)
     if not data_h4.empty:
-        data_h4_vwma = functions.get_vwma(data_h4, 50, 100, 200)
+        data_h4_vwma = functions.get_vwma(data_h4, 50, 100, 200, drop_nan=False)
     if not data_d1.empty:
-        data_d1_vwma = functions.get_vwma(data_d1, 50, 100, 200)
+        data_d1_vwma = functions.get_vwma(data_d1, 50, 100, 200, drop_nan=False)
+    if not data_w1.empty:
+        data_w1_vwma = functions.get_vwma(data_w1, 50, 100, 200, drop_nan=False)
 
     return ScannerResult(security,
                          last_price,
                          get_state(security, "H1", data_h1_vwma),
                          get_state(security, "H4", data_h4_vwma),
-                         get_state(security, "D1", data_d1_vwma))
+                         get_state(security, "D1", data_d1_vwma),
+                         get_state(security, "W1", data_w1_vwma))
 
 
 def print_scanner_results(results: List[ScannerResult]):
@@ -230,14 +242,16 @@ def print_scanner_results(results: List[ScannerResult]):
     if not os.path.exists(parent_dir): os.makedirs(parent_dir)
     filtered_results = [x for x in results if x.get_h1_state().get_status() and x.get_h4_state().get_status() and x.get_d1_state().get_status()]
     total_with_data_count = len(filtered_results)
-    interesting_results = [x for x in filtered_results if x.get_h1_state().get_interest() or x.get_h4_state().get_interest() or x.get_d1_state().get_interest()]
+    interesting_results = [x for x in filtered_results if
+                           x.get_h1_state().get_interest() or x.get_h4_state().get_interest() or x.get_d1_state().get_interest() or x.get_w1_state().get_interest()]
     interesting_results_count = len(interesting_results)
-    # Sorting D1 potential -> H4 potential -> H1 potential -> list level -> ticker
+    # Sorting max(H1/H4/D1/W1 potential) -> list level -> ticker
     filtered_results = sorted(interesting_results,
                               key=lambda a: (
                                   max(a.get_d1_state().get_potential(),
                                       a.get_h4_state().get_potential(),
-                                      a.get_h1_state().get_potential()),
+                                      a.get_h1_state().get_potential(),
+                                      a.get_w1_state().get_potential()),
                                   a.get_security().get_list_level(),
                                   a.get_security().get_ticker()
                               ),
@@ -253,15 +267,19 @@ def print_scanner_results(results: List[ScannerResult]):
             'trend_h1': res.get_h1_state().get_trend(),
             'trend_h4': res.get_h4_state().get_trend(),
             'trend_d1': res.get_d1_state().get_trend(),
+            'trend_w1': res.get_w1_state().get_trend(),
             'style_h1': res.get_h1_state().get_style(),
             'style_h4': res.get_h4_state().get_style(),
             'style_d1': res.get_d1_state().get_style(),
+            'style_w1': res.get_w1_state().get_style(),
             'potential_h1': res.get_h1_state().get_potential_str(),
             'potential_h4': res.get_h4_state().get_potential_str(),
             'potential_d1': res.get_d1_state().get_potential_str(),
+            'potential_w1': res.get_w1_state().get_potential_str(),
             'img_h1': res.get_h1_state().get_image_path(parent_dir),
             'img_h4': res.get_h4_state().get_image_path(parent_dir),
-            'img_d1': res.get_d1_state().get_image_path(parent_dir)
+            'img_d1': res.get_d1_state().get_image_path(parent_dir),
+            'img_w1': res.get_w1_state().get_image_path(parent_dir)
         })
 
     with open('scanner_template.tmpl', 'r') as file:
