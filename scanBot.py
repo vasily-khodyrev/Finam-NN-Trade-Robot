@@ -58,7 +58,7 @@ def scan_and_send(message: telebot.types.Message):
 
 @bot.message_handler(commands=['last_stock'])
 def send_last_stock_result(message: telebot.types.Message):
-    res = get_images("Stock")
+    res = get_images("Stocks")
     if res is None:
         bot.reply_to(message, "Ups... Something went wrong")
         return

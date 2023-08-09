@@ -295,7 +295,7 @@ async def get_security_state(session: aiohttp.ClientSession, security: ISSSecuri
 
 async def get_futures_security_state(session: aiohttp.ClientSession, security: ISSSecurity) -> ScannerResult:
     # M1 - for last 5 days
-    from_m1_date = (datetime.datetime.now() - datetime.timedelta(days=3)).strftime("%Y-%m-%d")
+    from_m1_date = (datetime.datetime.now() - datetime.timedelta(days=10)).strftime("%Y-%m-%d")
     data_m1 = await functions.get_futures_candles(session, security.get_ticker(), "M1", from_m1_date, None)
 
     print(f"Received data for {security.get_ticker()}")
