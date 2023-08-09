@@ -1,0 +1,72 @@
+import json
+import os
+import time
+from typing import Optional, Tuple
+
+import telebot
+import subprocess
+
+BOT_TOKEN = os.environ.get('BOT_TOKEN')
+
+if BOT_TOKEN is None or len(BOT_TOKEN) == 0:
+    print(f"Token not defined")
+    exit(-1)
+
+bot = telebot.TeleBot(BOT_TOKEN)
+
+
+@bot.message_handler(commands=['scan'])
+def scan_and_send(message: telebot.types.Message):
+    start = time.time()
+    print(f"starting scanner script")
+    #command = 'start C:/Work/finam/Finam-NN-Trade-Robot/scanner.cmd'
+    command = ['cmd', '/c', 'python', 'scanner.py']
+    process = subprocess.Popen(command)
+    process.wait()
+
+    end = time.time()
+    total_time = end - start
+    print(f"Script completed with return code {process.returncode} in {str(total_time)} sec")
+    #os.system('start C:/Work/finam/Finam-NN-Trade-Robot/scanner.cmd')
+    send_last_result(message)
+
+
+@bot.message_handler(commands=['last'])
+def send_last_result(message: telebot.types.Message):
+    res = get_images()
+    if res is None:
+        bot.reply_to(message, "Ups... Something went wrong")
+        return
+    general_msg, images = res
+    bot.reply_to(message, general_msg)
+    for img in images:
+        _msg, _img_path = img
+        bot.send_photo(message.from_user.id, photo=open(_img_path, 'rb'), caption=_msg)
+
+
+def get_images() -> Optional[Tuple[str, list[Tuple[str, str]]]]:
+    parent_dir = os.path.join("_scan", "out")
+    out_json_path = os.path.join(parent_dir, f"data.json")
+    if not os.path.exists(out_json_path):
+        return None
+    data_file = open(out_json_path)
+    data = json.load(data_file)
+    data_file.close()
+    total_scanned = data["total_scanned"]
+    interesting_results = data["interesting_results"]
+    scan_date = data["scan_date"]
+    scan_list = data["scan_list"]
+    general_msg = f"Total scanned {total_scanned}. Interesting: {interesting_results} ScanDate: {scan_date}"
+    images = []
+    for i in range(0, 3):
+        first_stock = scan_list[i]
+        s_name = first_stock["name"]
+        s_desc = first_stock["description"]
+        s_price = first_stock["last_price"]
+        s_img = first_stock["img_h1"]
+        s_potential = first_stock["potential_h1"]
+        images.append((f"{s_name}-{s_desc} Price: {s_price} PotentialH1: {s_potential}", s_img))
+    return general_msg, images
+
+
+bot.infinity_polling()

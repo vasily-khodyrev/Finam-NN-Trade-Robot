@@ -3,6 +3,8 @@ import datetime
 import math
 import os
 import time
+import json
+import signal
 from enum import Enum
 from typing import Optional, List
 
@@ -209,6 +211,7 @@ async def get_security_state(session: aiohttp.ClientSession, security: ISSSecuri
     data_d1 = await functions.get_stock_candles(session, security.get_ticker(), "D1", from_d1_date, None)
     data_h1 = await functions.get_stock_candles(session, security.get_ticker(), "H1", from_h1_date, None)
     data_w1 = await functions.get_stock_candles(session, security.get_ticker(), "W1", from_w1_date, None)
+    print(f"Received data for {security.get_ticker()}")
     data_h4 = pd.DataFrame()
     last_price = None
     if not data_h1.empty:
@@ -284,17 +287,25 @@ def print_scanner_results(results: List[ScannerResult]):
 
     with open('scanner_template.tmpl', 'r') as file:
         template = file.read()
-    output = chevron.render(template=template, data={
+    data = {
         'total_scanned': results_count,
         'total_with_data': total_with_data_count,
         'interesting_results': interesting_results_count,
         'scan_list': res_params,
         'scan_date': scan_date
-    })
+    }
+    output = chevron.render(template=template, data=data)
     out_file_path = os.path.join(parent_dir, f"index.html")
     out_file = open(out_file_path, "w", encoding="utf-8")
     n = out_file.write(output)
     out_file.close()
+
+    jsonString = json.dumps(data)
+    out_json_path = os.path.join(parent_dir, f"data.json")
+    jsonFile = open(out_json_path, "w")
+    jsonFile.write(jsonString)
+    jsonFile.close()
+
     print(f"Found {interesting_results_count} interesting results\n")
     print(f"Result is written to {out_file_path}")
 
@@ -315,7 +326,14 @@ async def stock_screen():
         print(f"Execution completed in {str(total_time)} sec")
 
 
+def handler(signum, frame):
+    msg = "Ctrl-c was pressed. Terminate script"
+    print(msg, end="", flush=True)
+    exit(1)
+
+
 if __name__ == "__main__":
+    signal.signal(signal.SIGINT, handler)
 
     # make script location to become working directory
     abspath = os.path.abspath(__file__)
