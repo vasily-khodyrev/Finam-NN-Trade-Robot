@@ -5,6 +5,7 @@ import os
 import time
 import json
 import signal
+import sys
 from enum import Enum
 from typing import Optional, List
 
@@ -18,10 +19,17 @@ import functions
 
 
 class ISSSecurity:
-    def __init__(self, ticker: str, name: str, list_level: int):
+    def __init__(self,
+                 ticker: str,
+                 name: str,
+                 list_level: Optional[int] = 0,
+                 underlying: Optional[str] = "",
+                 last_date: Optional[datetime.datetime] = None):
         self._ticker = ticker
         self._name = name
         self._list_level = list_level
+        self._underlying = underlying
+        self._last_date = last_date
 
     def get_ticker(self) -> str:
         return self._ticker
@@ -31,6 +39,15 @@ class ISSSecurity:
 
     def get_list_level(self) -> int:
         return self._list_level
+
+    def get_underlying(self) -> Optional[str]:
+        return self._underlying
+
+    def get_last_date(self) -> Optional[datetime.datetime]:
+        return self._last_date
+
+    def get_last_date_str(self) -> Optional[str]:
+        return self._last_date.strftime("%Y-%m-%d") if self._last_date is not None else None
 
 
 class Trend(Enum):
@@ -61,6 +78,9 @@ class AssetState:
 
     def get_status(self) -> bool:
         return self._status
+
+    def get_tf(self) -> str:
+        return self._tf
 
     def get_trend(self) -> str:
         return self._trend.name if self._trend is not None else "None"
@@ -97,10 +117,10 @@ class ScannerResult:
     def __init__(self,
                  security: ISSSecurity,
                  last_price: Optional[float],
-                 h1_state: AssetState,
-                 h4_state: AssetState,
-                 d1_state: AssetState,
-                 w1_state: AssetState):
+                 h1_state: Optional[AssetState] = None,
+                 h4_state: Optional[AssetState] = None,
+                 d1_state: Optional[AssetState] = None,
+                 w1_state: Optional[AssetState] = None):
         self._security = security
         self._last_price = last_price
         self._h1_state = h1_state
@@ -111,16 +131,16 @@ class ScannerResult:
     def get_security(self) -> ISSSecurity:
         return self._security
 
-    def get_h1_state(self) -> AssetState:
+    def get_h1_state(self) -> Optional[AssetState]:
         return self._h1_state
 
-    def get_h4_state(self) -> AssetState:
+    def get_h4_state(self) -> Optional[AssetState]:
         return self._h4_state
 
-    def get_d1_state(self) -> AssetState:
+    def get_d1_state(self) -> Optional[AssetState]:
         return self._d1_state
 
-    def get_w1_state(self) -> AssetState:
+    def get_w1_state(self) -> Optional[AssetState]:
         return self._w1_state
 
     def get_last_price(self) -> str:
@@ -140,8 +160,43 @@ async def get_moex_securities(session: aiohttp.ClientSession) -> List[ISSSecurit
             ticker = line['SECID']
             name = line['SECNAME']
             list_level = line['LISTLEVEL']
-            result.append(ISSSecurity(ticker, name, list_level))
+            result.append(ISSSecurity(ticker, name, list_level=list_level))
             print(f"{ticker}: {name} - {list_level}")
+    return result
+
+
+async def get_moex_futures_securities(session: aiohttp.ClientSession,
+                                      _filter: list[str]) -> List[ISSSecurity]:
+    result = []
+    url = aiomoex.request_helpers.make_url(engine="futures",
+                                           market="forts",
+                                           ending="securities")
+    query = aiomoex.request_helpers.make_query()
+    data = await aiomoex.request_helpers.get_short_data(session, url, "securities", query)
+    now_date = datetime.datetime.now()
+    map_asset_futures = {}
+
+    for line in data:
+        if line['BOARDID'] == "RFUD":
+            ticker = line['SECID']
+            name = line['SECNAME']
+            last_date_str = line['LASTTRADEDATE']
+            last_date = pd.to_datetime(last_date_str, format='%Y-%m-%d')
+            underlying = line["ASSETCODE"]
+            if last_date > now_date and underlying in _filter:
+                underlying_futures = map_asset_futures.get(underlying, [])
+                underlying_futures.append(ISSSecurity(ticker, name, underlying=underlying, last_date=last_date))
+                map_asset_futures[underlying] = underlying_futures
+
+    for und, futs in map_asset_futures.items():
+        sorted_res = sorted(futs,
+                            key=lambda a: (
+                                a.get_last_date()
+                            ),
+                            reverse=False)
+        current_futures = sorted_res[0]
+        result.append(current_futures)
+        print(f"{current_futures.get_ticker()}: {current_futures.get_name()} - {current_futures.get_last_date_str()}")
     return result
 
 
@@ -238,10 +293,40 @@ async def get_security_state(session: aiohttp.ClientSession, security: ISSSecuri
                          get_state(security, "W1", data_w1_vwma))
 
 
-def print_scanner_results(results: List[ScannerResult]):
+async def get_futures_security_state(session: aiohttp.ClientSession, security: ISSSecurity) -> ScannerResult:
+    # M1 - for last 5 days
+    from_m1_date = (datetime.datetime.now() - datetime.timedelta(days=3)).strftime("%Y-%m-%d")
+    data_m1 = await functions.get_futures_candles(session, security.get_ticker(), "M1", from_m1_date, None)
+
+    print(f"Received data for {security.get_ticker()}")
+    data_m5 = pd.DataFrame()
+    data_m15 = pd.DataFrame()
+    last_price = None
+    if not data_m1.empty:
+        last_price = data_m1.tail(1)["close"].tolist()[0]
+        data_m5 = functions.aggregate(data_m1, 5)
+        data_m15 = functions.aggregate(data_m1, 15)
+    data_m1_vwma = pd.DataFrame()
+    data_m5_vwma = pd.DataFrame()
+    data_m15_vwma = pd.DataFrame()
+    if not data_m1.empty:
+        data_m1_vwma = functions.get_vwma(data_m1, 50, 100, 200, drop_nan=False)
+        data_m5_vwma = functions.get_vwma(data_m5, 50, 100, 200, drop_nan=False)
+        data_m15_vwma = functions.get_vwma(data_m15, 50, 100, 200, drop_nan=False)
+
+    return ScannerResult(security,
+                         last_price,
+                         h1_state=get_state(security, "m1", data_m1_vwma),
+                         h4_state=get_state(security, "m5", data_m5_vwma),
+                         d1_state=get_state(security, "m15", data_m15_vwma),
+                         w1_state=AssetState(security, "-", True, None, None, True, 0.0)
+                         )
+
+
+def print_scanner_results(description: str, results: List[ScannerResult]):
     scan_date = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
     results_count = len(results)
-    parent_dir = os.path.join("_scan", "out")  # os.path.join("_scan", scan_date)
+    parent_dir = os.path.join("_scan", "out_" + description)
     if not os.path.exists(parent_dir): os.makedirs(parent_dir)
     filtered_results = [x for x in results if x.get_h1_state().get_status() and x.get_h4_state().get_status() and x.get_d1_state().get_status()]
     total_with_data_count = len(filtered_results)
@@ -261,6 +346,10 @@ def print_scanner_results(results: List[ScannerResult]):
                               reverse=True)
 
     res_params = []
+    tfs = ['H1', 'H4', 'D1', 'W1']
+    if len(filtered_results)>0:
+        tfs = [filtered_results[0].get_h1_state().get_tf(), filtered_results[0].get_h4_state().get_tf(),
+               filtered_results[0].get_d1_state().get_tf(), filtered_results[0].get_w1_state().get_tf()]
     for res in filtered_results:
         res_params.append({
             'name': res.get_security().get_ticker(),
@@ -288,9 +377,14 @@ def print_scanner_results(results: List[ScannerResult]):
     with open('scanner_template.tmpl', 'r') as file:
         template = file.read()
     data = {
+        'description': description,
         'total_scanned': results_count,
         'total_with_data': total_with_data_count,
         'interesting_results': interesting_results_count,
+        'tf_1': tfs[0],
+        'tf_2': tfs[1],
+        'tf_3': tfs[2],
+        'tf_4': tfs[3],
         'scan_list': res_params,
         'scan_date': scan_date
     }
@@ -320,7 +414,23 @@ async def stock_screen():
         for security in securities:
             tasks.append(asyncio.create_task(get_security_state(session, security)))
         results = await asyncio.gather(*tasks)
-        print_scanner_results(results)
+        print_scanner_results("Stocks", results)
+        end = time.time()
+        total_time = end - start
+        print(f"Execution completed in {str(total_time)} sec")
+
+
+async def futures_screen():
+    connector = aiohttp.TCPConnector(force_close=True, limit=50, limit_per_host=10)
+    async with aiohttp.ClientSession(connector=connector) as session:
+        start = time.time()
+        securities = await get_moex_futures_securities(session, ["Si", "BR", "GOLD"])
+        print(f"Found {len(securities)} tickers on MOEX")
+        tasks = []
+        for security in securities:
+            tasks.append(asyncio.create_task(get_futures_security_state(session, security)))
+        results = await asyncio.gather(*tasks)
+        print_scanner_results("Futures", results)
         end = time.time()
         total_time = end - start
         print(f"Execution completed in {str(total_time)} sec")
@@ -341,7 +451,13 @@ if __name__ == "__main__":
     os.chdir(dir_name)
 
     loop = asyncio.get_event_loop()  # создаем цикл
-    task = loop.create_task(  # в цикл добавляем 1 задачу
-        stock_screen()
-    )
+    n = len(sys.argv)
+    if n > 1 and sys.argv[1] == 'futures':
+        task = loop.create_task(  # в цикл добавляем 1 задачу
+            futures_screen()
+        )
+    else:
+        task = loop.create_task(  # в цикл добавляем 1 задачу
+            stock_screen()
+        )
     loop.run_until_complete(task)  # ждем окончания выполнения цикла

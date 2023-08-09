@@ -1,7 +1,7 @@
 <html>
 
 <head>
-  <title>Scanner results {{scan_date}}</title>
+  <title>{{description}} scanner results {{scan_date}}</title>
   <meta charset="utf-8">
   <style>
 img {
@@ -45,7 +45,7 @@ th {
 </head>
 
 <body>
-<h3>Scanned date: {{scan_date}}</h3>
+<h3>{{description}} scanned date: {{scan_date}}</h3>
 <table>
 <tr>
     <th>Total scanned</th>
@@ -65,15 +65,15 @@ th {
     <th>Description</th>
     <th>Last price</th>
 
-    <th>H1</th>
-    <th>H4</th>
-    <th>D1</th>
-    <th>W1</th>
+    <th>{{tf_1}}</th>
+    <th>{{tf_2}}</th>
+    <th>{{tf_3}}</th>
+    <th>{{tf_4}}</th>
 
-    <th>Potential H1</th>
-    <th>Potential H4</th>
-    <th>Potential D1</th>
-    <th>Potential W1</th>
+    <th>Potential {{tf_1}}</th>
+    <th>Potential {{tf_2}}</th>
+    <th>Potential {{tf_3}}</th>
+    <th>Potential {{tf_4}}</th>
     <th>List Level</th>
 
 </tr>
