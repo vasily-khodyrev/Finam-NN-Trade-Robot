@@ -123,6 +123,9 @@ class AssetState:
     def updateInterest(self, new_interest: bool):
         self._interest = new_interest
 
+    def __lt__(self, other):
+        return self._potential < other.get_potential()
+
     def __repr__(self):
         return f"AssetState(tf={self._tf}, status={self._status}, interest={self._interest}, potential={self.get_potential_str()})"
 
@@ -298,10 +301,13 @@ async def get_security_state(session: aiohttp.ClientSession, security: ISSSecuri
     from_d1_date = (datetime.datetime.now() - datetime.timedelta(days=365)).strftime("%Y-%m-%d")
     # 8 years for 1W
     from_w1_date = (datetime.datetime.now() - datetime.timedelta(days=365*8)).strftime("%Y-%m-%d")
-    data_d1 = await functions.get_stock_candles(session, security.get_ticker(), "D1", from_d1_date, None)
-    data_h1 = await functions.get_stock_candles(session, security.get_ticker(), "H1", from_h1_date, None)
-    data_w1 = await functions.get_stock_candles(session, security.get_ticker(), "W1", from_w1_date, None)
-    print(f"Received data for {security.get_ticker()}")
+    data_d1 = await functions.get_stock_candles(session, security.get_ticker(), "D1", from_d1_date, None,
+                                                file_store=os.path.join("_scan", "csv", f"stock-{security.get_ticker()}_D1.csv"))
+    data_h1 = await functions.get_stock_candles(session, security.get_ticker(), "H1", from_h1_date, None,
+                                                file_store=os.path.join("_scan", "csv", f"stock-{security.get_ticker()}_H1.csv"))
+    data_w1 = await functions.get_stock_candles(session, security.get_ticker(), "W1", from_w1_date, None,
+                                                file_store=os.path.join("_scan", "csv", f"stock-{security.get_ticker()}_W1.csv"))
+    print(f"Received data for {security.get_ticker()} H1-{'OK' if not data_h1.empty else 'NOK'} D1-{'OK' if not data_d1.empty else 'NOK'} W1-{'OK' if not data_w1.empty else 'NOK'}")
     data_h4 = pd.DataFrame()
     last_price = None
     if not data_h1.empty:
@@ -434,7 +440,7 @@ def print_scanner_results(description: str, results: List[ScannerResult], isFutu
     results_count = len(results)
     parent_dir = os.path.join("_scan", "out_" + description)
     if not os.path.exists(parent_dir): os.makedirs(parent_dir)
-    filtered_results = [x for x in results if x.get_state0().get_status() and x.get_state1().get_status() and x.get_state2().get_status()]
+    filtered_results = [x for x in results if x.get_state0().get_status() or x.get_state1().get_status() or x.get_state2().get_status()]
     total_with_data_count = len(filtered_results)
     interesting_results = [x for x in filtered_results if
                            x.get_state0().get_interest() or x.get_state1().get_interest() or x.get_state2().get_interest() or x.get_state3().get_interest()]
@@ -442,10 +448,7 @@ def print_scanner_results(description: str, results: List[ScannerResult], isFutu
     # Sorting max(potential) -> list level -> ticker
     filtered_results = sorted(interesting_results,
                               key=lambda a: (
-                                  max(a.get_state3().get_potential(),
-                                      a.get_state2().get_potential(),
-                                      a.get_state1().get_potential(),
-                                      a.get_state0().get_potential()),
+                                  max(b.get_potential() for b in a.get_states()),
                                   a.get_security().get_list_level(),
                                   a.get_security().get_ticker()
                               ),
@@ -514,7 +517,7 @@ def print_scanner_results(description: str, results: List[ScannerResult], isFutu
 
 
 async def stock_screen():
-    connector = aiohttp.TCPConnector(force_close=True, limit=50, limit_per_host=10)
+    connector = aiohttp.TCPConnector(force_close=True, limit=5, limit_per_host=5)
     async with aiohttp.ClientSession(connector=connector) as session:
         start = time.time()
         securities = await get_moex_securities(session)
@@ -530,7 +533,7 @@ async def stock_screen():
 
 
 async def futures_screen():
-    connector = aiohttp.TCPConnector(force_close=True, limit=50, limit_per_host=10)
+    connector = aiohttp.TCPConnector(force_close=True, limit=5, limit_per_host=5)
     async with aiohttp.ClientSession(connector=connector) as session:
         start = time.time()
         securities = await get_moex_futures_securities(session, ["Si", "BR", "GOLD"])

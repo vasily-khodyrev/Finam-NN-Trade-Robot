@@ -8,12 +8,14 @@ from typing import Optional, Tuple, Callable
 import aiohttp
 import aiomoex
 import matplotlib.pyplot as plt
+import numpy
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.io
 from PIL import Image
 from plotly.subplots import make_subplots
+from sklearn.preprocessing import MinMaxScaler
 
 
 def get_timeframe_moex(tf: str):
@@ -202,37 +204,41 @@ async def get_futures_candles(session, ticker: str, timeframe: str, start: str, 
     return df
 
 
-async def get_futures_candles_s(ticker: str, timeframe: str, start: str, end: Optional[str] = None):
-    """Get stock candles for STOCKS from MOEX. New session is created"""
-    with aiohttp.ClientSession() as session:
-        data = get_futures_candles(session, ticker, timeframe, start, end)
-    return data
-
-
 async def get_stock_candles(session: aiohttp.ClientSession,
                             ticker: str,
                             timeframe: str,
                             start: str,
-                            end: Optional[str] = None):
+                            end: Optional[str] = None,
+                            file_store: Optional[str] = None):
     """Get stock candles for STOCKS from MOEX."""
     tf = get_timeframe_moex(timeframe)
+    old_data = pd.DataFrame(data=None, columns=["datetime", "open", "high", "low", "close", "volume"])
+    if file_store is not None:
+        file_exists = os.path.isfile(file_store)
+        if file_exists:  # Если файл существует
+            old_data = load_candles(file_store)
+            if len(old_data) > 0:
+                last_date = old_data["datetime"].iloc[-1]
+                requested_start = datetime.datetime.strptime(start, '%Y-%m-%d')
+                if requested_start < last_date:
+                    start = last_date.strftime("%Y-%m-%d")
     data = await aiomoex.get_market_candles(session, ticker, interval=tf, start=start, end=end)  # M10
     df = pd.DataFrame(data)
-    #Check if data is present - return empty dataframe with columns
+    # Check if data is present - return empty dataframe with columns
     if df.empty:
-        return pd.DataFrame(data=None, columns=["datetime", "open", "high", "low", "close", "volume"])
-    df['datetime'] = pd.to_datetime(df['begin'], format='%Y-%m-%d %H:%M:%S')
-    # для M1, M10, H1 - приводим дату свечи в правильный вид
-    if tf in [1, 10, 60]:
-        df['datetime'] = df['datetime'].apply(lambda x: x + datetime.timedelta(minutes=tf))
-    df = df[["datetime", "open", "high", "low", "close", "volume"]].copy()
-    return df
-
-
-async def get_stock_candles_s(ticker: str, timeframe: str, start: str, end: Optional[str] = None):
-    """Get stock candles for STOCKS from MOEX. New session is created"""
-    with aiohttp.ClientSession() as session:
-        return get_stock_candles(session, ticker, timeframe, start, end)
+        df = pd.DataFrame(data=None, columns=["datetime", "open", "high", "low", "close", "volume"])
+    else:
+        df['datetime'] = pd.to_datetime(df['begin'], format='%Y-%m-%d %H:%M:%S')
+        # для M1, M10, H1 - приводим дату свечи в правильный вид
+        if tf in [1, 10, 60]:
+            df['datetime'] = df['datetime'].apply(lambda x: x + datetime.timedelta(minutes=tf))
+        df = df[["datetime", "open", "high", "low", "close", "volume"]].copy()
+    full_data = df
+    if file_store is not None:
+        concat_data = pd.concat([old_data, df])
+        full_data = concat_data.drop_duplicates(subset=["datetime"], keep='last').reset_index(drop=True)
+        store_candles(full_data, file_store)
+    return full_data
 
 
 def aggregate(df: pd.DataFrame, period_min: int) -> pd.DataFrame:
@@ -279,7 +285,8 @@ def __get_period_lambda(x, period):
 def get_vwma(df_in: pd.DataFrame,
              period_vwma_vfast: Optional[int] = None,
              period_vwma_fast: Optional[int] = None,
-             period_vwma_slow: Optional[int] = None) -> pd.DataFrame:
+             period_vwma_slow: Optional[int] = None,
+             drop_nan: Optional[bool] = True) -> pd.DataFrame:
     """Calculate Volume Weighted Moving Average"""
     df = df_in.copy()
     df['cv'] = df['close'] * df['volume']
@@ -295,16 +302,16 @@ def get_vwma(df_in: pd.DataFrame,
     if period_vwma_fast is not None:
         df['cv_sum_fast'] = df['cv'].rolling(period_vwma_fast).sum()
         df['volume_sum_fast'] = df['volume'].rolling(period_vwma_fast).sum()
-        df['vwma_fast'] = df['cv_sum_fast'] / df['volume_sum_fast'] # формируем VWMA fast
+        df['vwma_fast'] = df['cv_sum_fast'] / df['volume_sum_fast']  # формируем VWMA fast
         result_columns.append("vwma_fast")
 
     if period_vwma_slow is not None:
         df['cv_sum_slow'] = df['cv'].rolling(period_vwma_slow).sum()
         df['volume_sum_slow'] = df['volume'].rolling(period_vwma_slow).sum()
-        df['vwma_slow'] = df['cv_sum_slow'] / df['volume_sum_slow'] # формируем VWMA slow
+        df['vwma_slow'] = df['cv_sum_slow'] / df['volume_sum_slow']  # формируем VWMA slow
         result_columns.append("vwma_slow")
-
-    df.dropna(inplace=True)  # удаляем все NULL значения
+    if drop_nan:
+        df.dropna(inplace=True)  # удаляем все NULL значения
     return df[result_columns].reset_index(drop=True).copy()
 
 
@@ -322,7 +329,7 @@ def create_image(df: pd.DataFrame, show_scales: bool) -> Image:
     fig2.add_trace(go.Scatter(x=hist.index, y=hist['vwma_fast'], marker_color='blue', name='VWMA fast'))
     fig2.add_trace(go.Scatter(x=hist.index, y=hist['vwma_slow'], marker_color='black', name='VWMA slow'))
     fig2.add_trace(go.Bar(x=hist.index, y=hist['volume']), secondary_y=True)
-    fig2.update_yaxes(range=[0, max_volume*10], secondary_y=True)
+    fig2.update_yaxes(range=[0, max_volume * 10], secondary_y=True)
     fig2.update_yaxes(visible=False, secondary_y=True)
     fig2.update_layout(margin=dict(l=0, r=0, b=0, t=0),
                        xaxis_rangeslider_visible=False,
@@ -334,7 +341,7 @@ def create_image(df: pd.DataFrame, show_scales: bool) -> Image:
     if not show_scales:
         fig2.update_layout(yaxis={'visible': False, 'showticklabels': False},
                            xaxis={'visible': False, 'showticklabels': False})
-    #fig2.show()
+    # fig2.show()
     image_data = plotly.io.to_image(fig2, width=512, height=512, format="png")
     return Image.open(io.BytesIO(image_data))
 
@@ -345,12 +352,92 @@ def load_candles(file_path: str) -> pd.DataFrame:
     return df
 
 
-def evaluate(df: pd.DataFrame,
-             idx: int,
-             len_check: int,
-             max_profit: float = 0.005,
-             max_loss: float = 0.001,
-             ) -> list[float]:
+def store_candles(data: pd.DataFrame, file_path: str):
+    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+    data.to_csv(file_path, index=False, encoding='utf-8', sep=',', date_format='%Y-%m-%d %H:%M:%S')
+
+
+def evaluate_up(df: pd.DataFrame,
+                idx: int,
+                len_check: int,
+                max_profit: float = 0.003,
+                max_loss: float = 0.001,
+                ) -> float:
+    """
+        Evaluates next candle -
+        Return: In case of UP - 1.0
+                In other cases [0,0]
+    """
+    _max_idx = df.last_valid_index()
+    _max_len = len_check
+    _max_profit = max_profit
+    _max_loss = max_loss
+    prev_close = df.at[idx, "close"]
+    up_max_profit_price = prev_close * (1 + _max_profit)
+    up_max_loss_price = prev_close * (1 - _max_loss)
+    down_max_profit_price = prev_close * (1 - _max_profit)
+    down_max_loss_price = prev_close * (1 + _max_loss)
+    no_up = False
+    for i in range(idx, idx + _max_len):
+        if i > _max_idx:
+            break
+        cur_close = df.at[i, "close"]
+        if no_up:
+            break
+        if not no_up and cur_close <= prev_close:
+            no_up = True
+    if not no_up:
+        return 1.0
+    return 0.0
+
+def evaluate_up_down(df: pd.DataFrame,
+                     idx: int,
+                     len_check: int,
+                     max_profit: float = 0.003,
+                     max_loss: float = 0.001,
+                     ) -> list[float]:
+    """
+        Evaluates next candle -
+          if its close is higher - return [1.0, 0.0]
+          if its close is lower - return [0.0, 1.0]
+        Return: In case of UP - [1,0]
+                In case of DOWN - [0,1]
+                In other cases [0,0]
+    """
+    _max_idx = df.last_valid_index()
+    _max_len = len_check
+    _max_profit = max_profit
+    _max_loss = max_loss
+    prev_close = df.at[idx, "close"]
+    up_max_profit_price = prev_close * (1 + _max_profit)
+    up_max_loss_price = prev_close * (1 - _max_loss)
+    down_max_profit_price = prev_close * (1 - _max_profit)
+    down_max_loss_price = prev_close * (1 + _max_loss)
+    no_up = False
+    no_down = False
+    for i in range(idx, idx + _max_len):
+        if i > _max_idx:
+            break
+        cur_close = df.at[i, "close"]
+        if no_up and no_down:
+            break
+        if not no_up and cur_close < prev_close:
+            no_up = True
+        if not no_down and cur_close > prev_close:
+            no_down = True
+    if not no_up:
+        return [1.0, 0.0]
+    if not no_down:
+        return [0.0, 1.0]
+    return [0.0, 0.0]
+
+
+def evaluate_tp_sl(df: pd.DataFrame,
+                   idx: int,
+                   len_check: int,
+                   max_profit: float = 0.003,
+                   max_loss: float = 0.001,
+                   ) -> list[float]:
     """
         Evaluates data starting from idx and say whether "close" data will go Up or Down
         (with provided max_profit and loss criteria)
@@ -397,6 +484,8 @@ def prepare_data_and_eval(df: pd.DataFrame,
                           has_vfast_vwma: Optional[bool] = False,
                           has_fast_vwma: Optional[bool] = False,
                           has_slow_vwma: Optional[bool] = False,
+                          flatten_data: Optional[bool] = True,
+                          scaler: Optional[MinMaxScaler] = None
                           ) -> Optional[Tuple[list[float], list[float]]]:
     """
         Provides prepared data for neural network:
@@ -410,7 +499,7 @@ def prepare_data_and_eval(df: pd.DataFrame,
             or None in case there's not enough data starting from index "idx"
 
     """
-    values = prepare_data(df, idx, window_size, has_vfast_vwma, has_fast_vwma, has_slow_vwma)
+    values = prepare_data(df, idx, window_size, has_vfast_vwma, has_fast_vwma, has_slow_vwma, scaler, flatten_data)
     if values is None:
         return None
     _eval = evaluator(df, idx + 1, look_forward)
@@ -423,6 +512,8 @@ def prepare_data(df: pd.DataFrame,
                  has_vfast_vwma: Optional[bool] = False,
                  has_fast_vwma: Optional[bool] = False,
                  has_slow_vwma: Optional[bool] = False,
+                 scaler: Optional[MinMaxScaler] = None,
+                 flatten_data: Optional[bool] = True,
                  ) -> Optional[list[float]]:
     """
         Provides prepared data for neural network:
@@ -434,43 +525,42 @@ def prepare_data(df: pd.DataFrame,
             Array of normalized data or None in case there's not enough data starting from index "idx"
 
     """
-    #print(f"select range from {idx} to {idx + window_size - 1}")
-    columns = ["open", "close", "low", "high", "volume"]
+    # print(f"select range from {idx} to {idx + window_size - 1}")
+    # todo seems volume should be removed
+    # columns = ["open", "close", "low", "high", "volume"]
+    columns = ["open", "close", "low", "high"]
     if has_vfast_vwma:
         columns.append("vwma_vfast")
     if has_fast_vwma:
         columns.append("vwma_fast")
     if has_slow_vwma:
         columns.append("vwma_slow")
-    print(df)
-    dfRange = df.iloc[:idx + 1][columns].tail(window_size).copy()
+    # print(df)
+    dfRange = df[columns].iloc[:idx + 1].tail(window_size).copy()
     if len(dfRange) != window_size:
         return None
-    _max = dfRange["open"].max()
-    print(dfRange)
-    dfRange["open"] = dfRange["open"] / _max
-    dfRange["close"] = dfRange["close"] / _max
-    dfRange["low"] = dfRange["low"] / _max
-    dfRange["high"] = dfRange["high"] / _max
-    dfRange["volume"] = dfRange["volume"] / _max
-    if has_vfast_vwma:
-        dfRange["vwma_vfast"] = dfRange["vwma_vfast"] / _max
-    if has_fast_vwma:
-        dfRange["vwma_fast"] = dfRange["vwma_fast"] / _max
-    if has_slow_vwma:
-        dfRange["vwma_slow"] = dfRange["vwma_slow"] / _max
-    #print(f"select range from {idx} to {idx + window_size - 1} AFTER NORMALIZATION")
-    #print(dfRange)
-    values = dfRange.values.flatten().tolist()
+    if scaler is not None:
+        dfRange = scaler.transform(dfRange)
+    # print(f"select range from {idx} to {idx + window_size - 1} AFTER NORMALIZATION")
+    # print(dfRange)
+    values = dfRange
+    if flatten_data:
+        if isinstance(dfRange, pd.DataFrame):
+            values = dfRange.values.flatten().tolist()
+        elif isinstance(dfRange, numpy.ndarray):
+            values = dfRange.reshape(1, -1).tolist()[0]
+        else:
+            print("Data not supported!")
+            values = None
     return values
 
 
 # Print iterations progress
 def printProgressBar(iteration: int,
-                     total:int,
-                     prefix:str = '',
-                     suffix:str = '',
-                     decimals = 1, length = 100, fill = '█', printEnd = "\r"):
+                     total: int,
+                     prefix: str = '',
+                     suffix: str = '',
+                     decimals=1, length=100, fill='█', printEnd="\r"):
     """
     Call in a loop to create terminal progress bar
     @params:
@@ -486,7 +576,7 @@ def printProgressBar(iteration: int,
     percent = ("{0:." + str(decimals) + "f}").format(100 * (iteration / float(total)))
     filledLength = int(length * iteration // total)
     bar = fill * filledLength + '-' * (length - filledLength)
-    print(f'\r{prefix} |{bar}| {percent}% {suffix}', end = printEnd)
+    print(f'\r{prefix} |{bar}| {percent}% {suffix}', end=printEnd)
     # Print New Line on Complete
     if iteration == total:
         print()
