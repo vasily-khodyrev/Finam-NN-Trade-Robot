@@ -134,43 +134,43 @@ class ScannerResult:
     def __init__(self,
                  security: ISSSecurity,
                  last_price: Optional[float],
-                 state_0: Optional[AssetState] = None,
-                 state_1: Optional[AssetState] = None,
-                 state_2: Optional[AssetState] = None,
-                 state_3: Optional[AssetState] = None):
+                 states: list[AssetState]):
         self._security = security
         self._last_price = last_price
-        self._state_0 = state_0
-        self._state_1 = state_1
-        self._state_2 = state_2
-        self._state_3 = state_3
+        self._states = states
 
     def get_security(self) -> ISSSecurity:
         return self._security
 
-    def get_state0(self) -> Optional[AssetState]:
-        return self._state_0
+    def hasValidState(self) -> bool:
+        _sts = self.get_states()
+        _res = False
+        for _s in _sts:
+            if _s.get_status():
+                _res = True
+                break
+        return _res
 
-    def get_state1(self) -> Optional[AssetState]:
-        return self._state_1
+    def hasAllValidStates(self) -> bool:
+        _sts = self.get_states()
+        _res = True
+        for _s in _sts:
+            if not _s.get_status():
+                _res = False
+                break
+        return _res
 
-    def get_state2(self) -> Optional[AssetState]:
-        return self._state_2
-
-    def get_state3(self) -> Optional[AssetState]:
-        return self._state_3
+    def hasInterest(self) -> bool:
+        _sts = self.get_states()
+        _res = False
+        for _s in _sts:
+            if _s.get_interest():
+                _res = True
+                break
+        return _res
 
     def get_states(self) -> list[AssetState]:
-        _result = []
-        if self.get_state0() is not None:
-            _result.append(self.get_state0())
-        if self.get_state1() is not None:
-            _result.append(self.get_state1())
-        if self.get_state2() is not None:
-            _result.append(self.get_state2())
-        if self.get_state3() is not None:
-            _result.append(self.get_state3())
-        return _result
+        return self._states
 
     def get_last_price(self) -> str:
         return "-" if self._last_price is None else "{:.2f}".format(self._last_price)
@@ -294,7 +294,7 @@ def get_state(security: ISSSecurity, tf: str, data_vwma: pd.DataFrame, futures: 
     return AssetState(security, tf, has_data, trend, img, interest, potential)
 
 
-async def get_security_state(session: aiohttp.ClientSession, security: ISSSecurity) -> ScannerResult:
+async def get_stock_security_state(session: aiohttp.ClientSession, security: ISSSecurity) -> ScannerResult:
     # 2 month for 1H ( 6 to be converted to 4H)
     from_h1_date = (datetime.datetime.now() - datetime.timedelta(days=150)).strftime("%Y-%m-%d")
     # 1 year for 1D
@@ -328,10 +328,12 @@ async def get_security_state(session: aiohttp.ClientSession, security: ISSSecuri
 
     return ScannerResult(security,
                          last_price,
-                         get_state(security, "H1", data_h1_vwma),
-                         get_state(security, "H4", data_h4_vwma),
-                         get_state(security, "D1", data_d1_vwma),
-                         get_state(security, "W1", data_w1_vwma))
+                         [
+                             get_state(security, "H1", data_h1_vwma),
+                             get_state(security, "H4", data_h4_vwma),
+                             get_state(security, "D1", data_d1_vwma),
+                             get_state(security, "W1", data_w1_vwma)
+                         ])
 
 
 def isSameTrend(trend1: Trend, trend2: Trend):
@@ -342,61 +344,71 @@ def isSameTrend(trend1: Trend, trend2: Trend):
     return isUp1 == isUp2
 
 
-def update_interest(states: list[AssetState]):
+def update_interest(states: list[AssetState], check_next_only: bool):
     if len(states) < 2:
         return
     for _idx in reversed(range(0, len(states) - 1)):
         _state = states[_idx]
         if _state.get_interest():
             _trend = _state.get_trend()
-            _same_higher_trend = True
-            for _back_idx in range(_idx + 1, len(states)):
-                _highState = states[_back_idx]
-                if not isSameTrend(_state.get_trend_value(), _highState.get_trend_value()):
-                    _same_higher_trend = False
-                    break
-            if not _same_higher_trend:
-                # since upper trends is different - it's not a correction at the moment
-                _state.updateInterest(False)
+            if check_next_only:
+                _next_state = states[_idx+1]
+                if not isSameTrend(_state.get_trend_value(), _next_state.get_trend_value()):
+                    _state.updateInterest(False)
+            else:
+                _same_higher_trend = True
+                for _back_idx in range(_idx + 1, len(states)):
+                    _highState = states[_back_idx]
+                    if not isSameTrend(_state.get_trend_value(), _highState.get_trend_value()):
+                        _same_higher_trend = False
+                        break
+                if not _same_higher_trend:
+                    # since upper trends is different - it's not a correction at the moment
+                    _state.updateInterest(False)
 
 
 async def get_futures_security_state(session: aiohttp.ClientSession, security: ISSSecurity) -> ScannerResult:
     # M1 - for last 5 days
     from_m1_date = (datetime.datetime.now() - datetime.timedelta(days=10)).strftime("%Y-%m-%d")
+    from_m10_date = (datetime.datetime.now() - datetime.timedelta(days=15)).strftime("%Y-%m-%d")
     from_h1_date = (datetime.datetime.now() - datetime.timedelta(days=30)).strftime("%Y-%m-%d")
     data_m1 = await functions.get_futures_candles(session, security.get_ticker(), "M1", from_m1_date, None)
+    data_m10 = await functions.get_futures_candles(session, security.get_ticker(), "M10", from_m10_date, None)
     data_h1 = await functions.get_futures_candles(session, security.get_ticker(), "H1", from_h1_date, None)
 
     print(f"Received data for {security.get_ticker()}")
     data_m5 = pd.DataFrame()
     data_m15 = pd.DataFrame()
+    data_m30 = pd.DataFrame()
     last_price = None
     if not data_m1.empty:
         last_price = data_m1.tail(1)["close"].tolist()[0]
         data_m5 = functions.aggregate(data_m1, 5)
         data_m15 = functions.aggregate(data_m1, 15)
+    if not data_m10.empty:
+        data_m30 = functions.aggregate(data_m10, 30)
     data_m1_vwma = pd.DataFrame()
     data_m5_vwma = pd.DataFrame()
     data_m15_vwma = pd.DataFrame()
+    data_m30_vwma = pd.DataFrame()
     data_h1_vwma = pd.DataFrame()
     if not data_m1.empty:
         data_m1_vwma = functions.get_vwma(data_m1, 50, 100, 200, drop_nan=False)
         data_m5_vwma = functions.get_vwma(data_m5, 50, 100, 200, drop_nan=False)
         data_m15_vwma = functions.get_vwma(data_m15, 50, 100, 200, drop_nan=False)
+    if not data_m30.empty:
+        data_m30_vwma = functions.get_vwma(data_m30, 50, 100, 200, drop_nan=False)
     if not data_h1.empty:
         data_h1_vwma = functions.get_vwma(data_h1, 50, 100, 200, drop_nan=False)
-    _state_0 = get_state(security, "M1", data_m1_vwma, False)
-    _state_1 = get_state(security, "M5", data_m5_vwma, False)
-    _state_2 = get_state(security, "M15", data_m15_vwma, False)
-    _state_3 = get_state(security, "H1", data_h1_vwma, False)
-    update_interest([_state_0, _state_1, _state_2, _state_3])
+    _state_m1 = get_state(security, "M1", data_m1_vwma, False)
+    _state_m5 = get_state(security, "M5", data_m5_vwma, False)
+    _state_m15 = get_state(security, "M15", data_m15_vwma, False)
+    _state_m30 = get_state(security, "M30", data_m30_vwma, False)
+    _state_h1 = get_state(security, "H1", data_h1_vwma, False)
+    update_interest([_state_m1, _state_m5, _state_m15, _state_h1], check_next_only=True)
     return ScannerResult(security,
                          last_price,
-                         state_0=_state_0,
-                         state_1=_state_1,
-                         state_2=_state_2,
-                         state_3=_state_3
-                         )
+                         [_state_m1, _state_m5, _state_m15, _state_m30, _state_h1])
 
 
 def notifyResultsWithBot(interesting_results: list[ScannerResult], parent_dir: str):
@@ -439,11 +451,11 @@ def print_scanner_results(description: str, results: List[ScannerResult], isFutu
     scan_date = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
     results_count = len(results)
     parent_dir = os.path.join("_scan", "out_" + description)
-    if not os.path.exists(parent_dir): os.makedirs(parent_dir)
-    filtered_results = [x for x in results if x.get_state0().get_status() or x.get_state1().get_status() or x.get_state2().get_status()]
+    if not os.path.exists(parent_dir):
+        os.makedirs(parent_dir)
+    filtered_results = [x for x in results if x.hasAllValidStates()]
     total_with_data_count = len(filtered_results)
-    interesting_results = [x for x in filtered_results if
-                           x.get_state0().get_interest() or x.get_state1().get_interest() or x.get_state2().get_interest() or x.get_state3().get_interest()]
+    interesting_results = [x for x in filtered_results if x.hasInterest()]
     interesting_results_count = len(interesting_results)
     # Sorting max(potential) -> list level -> ticker
     filtered_results = sorted(interesting_results,
@@ -457,8 +469,8 @@ def print_scanner_results(description: str, results: List[ScannerResult], isFutu
     res_params = []
     tfs = ['H1', 'H4', 'D1', 'W1']
     if len(filtered_results) > 0:
-        tfs = [filtered_results[0].get_state0().get_tf(), filtered_results[0].get_state1().get_tf(),
-               filtered_results[0].get_state2().get_tf(), filtered_results[0].get_state3().get_tf()]
+        _states = filtered_results[0].get_states()
+        tfs = [x.get_tf() for x in _states]
     for res in filtered_results:
         res_params.append({
             'name': res.get_security().get_ticker(),
@@ -510,7 +522,7 @@ async def stock_screen():
         print(f"Found {len(securities)} tickers on MOEX")
         tasks = []
         for security in securities:
-            tasks.append(asyncio.create_task(get_security_state(session, security)))
+            tasks.append(asyncio.create_task(get_stock_security_state(session, security)))
         results = await asyncio.gather(*tasks)
         print_scanner_results("Stocks", results)
         end = time.time()
@@ -522,7 +534,7 @@ async def futures_screen():
     connector = aiohttp.TCPConnector(force_close=True, limit=5, limit_per_host=5)
     async with aiohttp.ClientSession(connector=connector) as session:
         start = time.time()
-        securities = await get_moex_futures_securities(session, ["Si", "BR", "GOLD", "NG", "MIX", "SILV"])
+        securities = await get_moex_futures_securities(session, ["Si", "BR", "GOLD", "NG", "MIX", "RTS", "SILV"])
         print(f"Found {len(securities)} tickers on MOEX")
         tasks = []
         for security in securities:
