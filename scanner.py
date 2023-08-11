@@ -465,22 +465,11 @@ def print_scanner_results(description: str, results: List[ScannerResult], isFutu
             'description': res.get_security().get_name(),
             'last_price': res.get_last_price(),
             'list_level': res.get_security().get_list_level(),
-            'trend0': res.get_state0().get_trend(),
-            'trend1': res.get_state1().get_trend(),
-            'trend2': res.get_state2().get_trend(),
-            'trend3': res.get_state3().get_trend(),
-            'style0': res.get_state0().get_style(),
-            'style1': res.get_state1().get_style(),
-            'style2': res.get_state2().get_style(),
-            'style3': res.get_state3().get_style(),
-            'potential0': res.get_state0().get_potential_str(),
-            'potential1': res.get_state1().get_potential_str(),
-            'potential2': res.get_state2().get_potential_str(),
-            'potential3': res.get_state3().get_potential_str(),
-            'img0': res.get_state0().get_image_path(parent_dir),
-            'img1': res.get_state1().get_image_path(parent_dir),
-            'img2': res.get_state2().get_image_path(parent_dir),
-            'img3': res.get_state3().get_image_path(parent_dir)
+            'states': [{'trend': x.get_trend(),
+                        'style': x.get_style(),
+                        'tf': x.get_tf(),
+                        'potential': x.get_potential_str(),
+                        'img': x.get_image_path(parent_dir)} for x in res.get_states()],
         })
 
     with open('scanner_template.tmpl', 'r') as file:
@@ -490,10 +479,7 @@ def print_scanner_results(description: str, results: List[ScannerResult], isFutu
         'total_scanned': results_count,
         'total_with_data': total_with_data_count,
         'interesting_results': interesting_results_count,
-        'tf_1': tfs[0],
-        'tf_2': tfs[1],
-        'tf_3': tfs[2],
-        'tf_4': tfs[3],
+        'tfs': [{'tf': tf} for tf in tfs],
         'scan_list': res_params,
         'scan_date': scan_date
     }
@@ -536,7 +522,7 @@ async def futures_screen():
     connector = aiohttp.TCPConnector(force_close=True, limit=5, limit_per_host=5)
     async with aiohttp.ClientSession(connector=connector) as session:
         start = time.time()
-        securities = await get_moex_futures_securities(session, ["Si", "BR", "GOLD"])
+        securities = await get_moex_futures_securities(session, ["Si", "BR", "GOLD", "NG", "MIX", "SILV"])
         print(f"Found {len(securities)} tickers on MOEX")
         tasks = []
         for security in securities:
