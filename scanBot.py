@@ -91,12 +91,6 @@ def send_last_results(_type: str,
     general_msg = f"Total scanned {total_scanned}. Interesting: {interesting_results} ScanDate: {scan_date}"
     bot.send_message(message.from_user.id, general_msg)
 
-    _result = []
-    tf_0 = data["tf_1"]
-    tf_1 = data["tf_2"]
-    tf_2 = data["tf_3"]
-    tf_3 = data["tf_4"]
-
     for i in range(0, 3):
         images = []
         if i < len(scan_list):
@@ -104,36 +98,20 @@ def send_last_results(_type: str,
             s_name = stock["name"]
             s_desc = stock["description"]
             s_price = stock["last_price"]
-            s_img0 = stock["img0"]
-            s_img1 = stock["img1"]
-            s_img2 = stock["img2"]
-            s_img3 = stock["img3"]
-            s_potential0 = stock["potential0"]
-            s_potential1 = stock["potential1"]
-            s_potential2 = stock["potential2"]
-            s_potential3 = stock["potential3"]
-            _str = f"{s_name}:{s_desc} p:{s_price} {tf_0}:{s_potential0}, {tf_1}:{s_potential1}, {tf_2}:{s_potential2}, {tf_3}:{s_potential3}"
+
+            _str = f"{s_name}:{s_desc} p:{s_price} "
+            states = stock["states"]
+            for state in states:
+                s_img = state["img"]
+                s_tf = state["tf"]
+                s_potential = state["potential"]
+                _str = f"{_str} {s_tf}:{s_potential}"
+                _img_str = f"{s_name}: price:{s_price} {s_tf}:{s_potential}"
+                if s_img:
+                    images.append(
+                        telebot.types.InputMediaPhoto(open(s_img, 'rb'), caption=_img_str)
+                    )
             bot.send_message(message.from_user.id, _str)
-            if s_img0:
-                _img_str0 = f"{s_name}: price:{s_price} {tf_0}:{s_potential0}"
-                images.append(
-                    telebot.types.InputMediaPhoto(open(s_img0, 'rb'), caption=_img_str0)
-                )
-            if s_img1:
-                _img_str1 = f"{s_name}: price:{s_price} {tf_1}:{s_potential1}"
-                images.append(
-                    telebot.types.InputMediaPhoto(open(s_img1, 'rb'), caption=_img_str1)
-                )
-            if s_img2:
-                _img_str2 = f"{s_name}: price:{s_price} {tf_2}:{s_potential2}"
-                images.append(
-                    telebot.types.InputMediaPhoto(open(s_img2, 'rb'), caption=_img_str2)
-                )
-            if s_img3:
-                _img_str3 = f"{s_name}: price:{s_price} {tf_3}:{s_potential3}"
-                images.append(
-                    telebot.types.InputMediaPhoto(open(s_img3, 'rb'), caption=_img_str3)
-                )
             if len(images) > 0:
                 bot.send_media_group(message.from_user.id, images)
 
