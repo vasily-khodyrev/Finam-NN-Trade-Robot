@@ -8,6 +8,7 @@ import signal
 import sys
 from enum import Enum
 from typing import Optional, List
+import telebot
 
 import aiohttp
 import aiomoex
@@ -49,6 +50,9 @@ class ISSSecurity:
     def get_last_date_str(self) -> Optional[str]:
         return self._last_date.strftime("%Y-%m-%d") if self._last_date is not None else None
 
+    def __repr__(self) -> str:
+        return f"ISSSecurity({self.get_ticker()}, {self.get_name()})"
+
 
 class Trend(Enum):
     UP = "Up"
@@ -82,8 +86,11 @@ class AssetState:
     def get_tf(self) -> str:
         return self._tf
 
+    def get_trend_value(self) -> Trend:
+        return self._trend
+
     def get_trend(self) -> str:
-        return self._trend.name if self._trend is not None else "None"
+        return self._trend.name if self._trend is not None else "-"
 
     def get_image(self) -> Image:
         return self._image
@@ -94,7 +101,8 @@ class AssetState:
                 ticker = self._security.get_ticker()
                 tf = self._tf
                 pic_dir = os.path.join(parent_dir, "pic")
-                if not os.path.exists(pic_dir): os.makedirs(pic_dir)
+                if not os.path.exists(pic_dir):
+                    os.makedirs(pic_dir)
                 self._file_path = os.path.abspath(os.path.join(pic_dir, f"{ticker}-{tf}.png"))
                 self._image.save(self._file_path)
             return self._file_path
@@ -112,39 +120,60 @@ class AssetState:
     def get_style(self) -> str:
         return "" if math.isclose(self._potential, 0.0) else "green"
 
+    def updateInterest(self, new_interest: bool):
+        self._interest = new_interest
+
+    def __repr__(self):
+        return f"AssetState(tf={self._tf}, status={self._status}, interest={self._interest}, potential={self.get_potential_str()})"
+
 
 class ScannerResult:
     def __init__(self,
                  security: ISSSecurity,
                  last_price: Optional[float],
-                 h1_state: Optional[AssetState] = None,
-                 h4_state: Optional[AssetState] = None,
-                 d1_state: Optional[AssetState] = None,
-                 w1_state: Optional[AssetState] = None):
+                 state_0: Optional[AssetState] = None,
+                 state_1: Optional[AssetState] = None,
+                 state_2: Optional[AssetState] = None,
+                 state_3: Optional[AssetState] = None):
         self._security = security
         self._last_price = last_price
-        self._h1_state = h1_state
-        self._h4_state = h4_state
-        self._d1_state = d1_state
-        self._w1_state = w1_state
+        self._state_0 = state_0
+        self._state_1 = state_1
+        self._state_2 = state_2
+        self._state_3 = state_3
 
     def get_security(self) -> ISSSecurity:
         return self._security
 
-    def get_h1_state(self) -> Optional[AssetState]:
-        return self._h1_state
+    def get_state0(self) -> Optional[AssetState]:
+        return self._state_0
 
-    def get_h4_state(self) -> Optional[AssetState]:
-        return self._h4_state
+    def get_state1(self) -> Optional[AssetState]:
+        return self._state_1
 
-    def get_d1_state(self) -> Optional[AssetState]:
-        return self._d1_state
+    def get_state2(self) -> Optional[AssetState]:
+        return self._state_2
 
-    def get_w1_state(self) -> Optional[AssetState]:
-        return self._w1_state
+    def get_state3(self) -> Optional[AssetState]:
+        return self._state_3
+
+    def get_states(self) -> list[AssetState]:
+        _result = []
+        if self.get_state0() is not None:
+            _result.append(self.get_state0())
+        if self.get_state1() is not None:
+            _result.append(self.get_state1())
+        if self.get_state2() is not None:
+            _result.append(self.get_state2())
+        if self.get_state3() is not None:
+            _result.append(self.get_state3())
+        return _result
 
     def get_last_price(self) -> str:
         return "-" if self._last_price is None else "{:.2f}".format(self._last_price)
+
+    def __repr__(self) -> str:
+        return f"ScannerResult(symbol={self.get_security().get_ticker()}, lastPrice={self.get_last_price()})"
 
 
 async def get_moex_securities(session: aiohttp.ClientSession) -> List[ISSSecurity]:
@@ -218,7 +247,7 @@ def get_change_trend(trend: Trend) -> Trend:
         return trend
 
 
-def get_potential(dataset: pd.DataFrame):
+def get_potential(dataset: pd.DataFrame, futures: bool = False):
     count = 0
     cur_trend = None
     reversed_dataset = dataset.iloc[::-1]
@@ -235,15 +264,21 @@ def get_potential(dataset: pd.DataFrame):
     potential = 0.0
     last_row = dataset.tail(1)
     last_close = last_row["close"].tolist()[0]
+    last_low = last_row["low"].tolist()[0]
     last_vwma_fast = last_row["vwma_fast"].tolist()[0]
     last_vwma_slow = last_row["vwma_slow"].tolist()[0]
-    if last_vwma_fast > last_vwma_slow >= last_close:
-        interest = True
-        potential = (last_vwma_fast - last_close) / last_close * 100
+    if futures:
+        if last_vwma_fast > last_vwma_slow and last_close < last_vwma_fast:
+            interest = True
+            potential = (last_vwma_fast - last_close) / last_close * 100
+    else:
+        if last_vwma_fast > last_vwma_slow >= last_close:
+            interest = True
+            potential = (last_vwma_fast - last_close) / last_close * 100
     return cur_trend, interest, potential
 
 
-def get_state(security: ISSSecurity, tf: str, data_vwma: pd.DataFrame) -> AssetState:
+def get_state(security: ISSSecurity, tf: str, data_vwma: pd.DataFrame, futures: bool = False) -> AssetState:
     dataset = data_vwma.tail(256)
     has_data = not data_vwma.empty
     trend = None
@@ -251,7 +286,7 @@ def get_state(security: ISSSecurity, tf: str, data_vwma: pd.DataFrame) -> AssetS
     potential = 0.0
     img = None
     if has_data:
-        trend, interest, potential = get_potential(dataset)
+        trend, interest, potential = get_potential(dataset, futures)
         img = functions.create_image(dataset, True)
     return AssetState(security, tf, has_data, trend, img, interest, potential)
 
@@ -293,10 +328,38 @@ async def get_security_state(session: aiohttp.ClientSession, security: ISSSecuri
                          get_state(security, "W1", data_w1_vwma))
 
 
+def isSameTrend(trend1: Trend, trend2: Trend):
+    if trend1 is None or trend2 is None:
+        return False
+    isUp1 = trend1 == Trend.UP or trend1 == Trend.CHG_UP
+    isUp2 = trend2 == Trend.UP or trend2 == Trend.CHG_UP
+    return isUp1 == isUp2
+
+
+def update_interest(states: list[AssetState]):
+    if len(states) < 2:
+        return
+    for _idx in reversed(range(0, len(states) - 1)):
+        _state = states[_idx]
+        if _state.get_interest():
+            _trend = _state.get_trend()
+            _same_higher_trend = True
+            for _back_idx in range(_idx + 1, len(states)):
+                _highState = states[_back_idx]
+                if not isSameTrend(_state.get_trend_value(), _highState.get_trend_value()):
+                    _same_higher_trend = False
+                    break
+            if not _same_higher_trend:
+                # since upper trends is different - it's not a correction at the moment
+                _state.updateInterest(False)
+
+
 async def get_futures_security_state(session: aiohttp.ClientSession, security: ISSSecurity) -> ScannerResult:
     # M1 - for last 5 days
     from_m1_date = (datetime.datetime.now() - datetime.timedelta(days=10)).strftime("%Y-%m-%d")
+    from_h1_date = (datetime.datetime.now() - datetime.timedelta(days=30)).strftime("%Y-%m-%d")
     data_m1 = await functions.get_futures_candles(session, security.get_ticker(), "M1", from_m1_date, None)
+    data_h1 = await functions.get_futures_candles(session, security.get_ticker(), "H1", from_h1_date, None)
 
     print(f"Received data for {security.get_ticker()}")
     data_m5 = pd.DataFrame()
@@ -309,37 +372,80 @@ async def get_futures_security_state(session: aiohttp.ClientSession, security: I
     data_m1_vwma = pd.DataFrame()
     data_m5_vwma = pd.DataFrame()
     data_m15_vwma = pd.DataFrame()
+    data_h1_vwma = pd.DataFrame()
     if not data_m1.empty:
         data_m1_vwma = functions.get_vwma(data_m1, 50, 100, 200, drop_nan=False)
         data_m5_vwma = functions.get_vwma(data_m5, 50, 100, 200, drop_nan=False)
         data_m15_vwma = functions.get_vwma(data_m15, 50, 100, 200, drop_nan=False)
-
+    if not data_h1.empty:
+        data_h1_vwma = functions.get_vwma(data_h1, 50, 100, 200, drop_nan=False)
+    _state_0 = get_state(security, "M1", data_m1_vwma, False)
+    _state_1 = get_state(security, "M5", data_m5_vwma, False)
+    _state_2 = get_state(security, "M15", data_m15_vwma, False)
+    _state_3 = get_state(security, "H1", data_h1_vwma, False)
+    update_interest([_state_0, _state_1, _state_2, _state_3])
     return ScannerResult(security,
                          last_price,
-                         h1_state=get_state(security, "m1", data_m1_vwma),
-                         h4_state=get_state(security, "m5", data_m5_vwma),
-                         d1_state=get_state(security, "m15", data_m15_vwma),
-                         w1_state=AssetState(security, "-", True, None, None, True, 0.0)
+                         state_0=_state_0,
+                         state_1=_state_1,
+                         state_2=_state_2,
+                         state_3=_state_3
                          )
 
 
-def print_scanner_results(description: str, results: List[ScannerResult]):
+def notifyResultsWithBot(interesting_results: list[ScannerResult], parent_dir: str):
+    BOT_TOKEN = os.environ.get('BOT_TOKEN')
+    OWNER_TELE_ID = int(os.environ.get('OWNER_TELE_ID'))
+    if BOT_TOKEN is None or len(BOT_TOKEN) == 0:
+        print(f"Token not defined")
+        return
+
+    bot = telebot.TeleBot(BOT_TOKEN)
+    if len(interesting_results) > 0:
+        scan_date = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+        bot.send_message(OWNER_TELE_ID, f"Scan results on {scan_date}: {len(interesting_results)} found:")
+    for result in interesting_results:
+        _security = result.get_security()
+        _last_price = result.get_last_price()
+        _medias = []
+        _str = f"{_security.get_name()}: price:{_last_price}"
+        for state in result.get_states():
+            _tf = state.get_tf()
+            _potential = state.get_potential_str()
+            _msg = f"{_security.get_ticker()}-{_security.get_name()} Price: {_last_price} Potential-{_tf}: {_potential}"
+            _img_path = state.get_image_path(parent_dir)
+            if state.get_interest():
+                _str = _str + f" {_tf}:{_potential}"
+            if _img_path:
+                _medias.append(
+                    telebot.types.InputMediaPhoto(open(_img_path, 'rb'), caption=_msg)
+                )
+        #send text overview
+        bot.send_message(OWNER_TELE_ID, _str)
+        if len(_medias) > 0:
+            # send charts overview
+            bot.send_media_group(OWNER_TELE_ID, _medias)
+
+    bot.stop_bot()
+
+
+def print_scanner_results(description: str, results: List[ScannerResult], isFutures: bool = False):
     scan_date = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
     results_count = len(results)
     parent_dir = os.path.join("_scan", "out_" + description)
     if not os.path.exists(parent_dir): os.makedirs(parent_dir)
-    filtered_results = [x for x in results if x.get_h1_state().get_status() and x.get_h4_state().get_status() and x.get_d1_state().get_status()]
+    filtered_results = [x for x in results if x.get_state0().get_status() and x.get_state1().get_status() and x.get_state2().get_status()]
     total_with_data_count = len(filtered_results)
     interesting_results = [x for x in filtered_results if
-                           x.get_h1_state().get_interest() or x.get_h4_state().get_interest() or x.get_d1_state().get_interest() or x.get_w1_state().get_interest()]
+                           x.get_state0().get_interest() or x.get_state1().get_interest() or x.get_state2().get_interest() or x.get_state3().get_interest()]
     interesting_results_count = len(interesting_results)
-    # Sorting max(H1/H4/D1/W1 potential) -> list level -> ticker
+    # Sorting max(potential) -> list level -> ticker
     filtered_results = sorted(interesting_results,
                               key=lambda a: (
-                                  max(a.get_d1_state().get_potential(),
-                                      a.get_h4_state().get_potential(),
-                                      a.get_h1_state().get_potential(),
-                                      a.get_w1_state().get_potential()),
+                                  max(a.get_state3().get_potential(),
+                                      a.get_state2().get_potential(),
+                                      a.get_state1().get_potential(),
+                                      a.get_state0().get_potential()),
                                   a.get_security().get_list_level(),
                                   a.get_security().get_ticker()
                               ),
@@ -347,31 +453,31 @@ def print_scanner_results(description: str, results: List[ScannerResult]):
 
     res_params = []
     tfs = ['H1', 'H4', 'D1', 'W1']
-    if len(filtered_results)>0:
-        tfs = [filtered_results[0].get_h1_state().get_tf(), filtered_results[0].get_h4_state().get_tf(),
-               filtered_results[0].get_d1_state().get_tf(), filtered_results[0].get_w1_state().get_tf()]
+    if len(filtered_results) > 0:
+        tfs = [filtered_results[0].get_state0().get_tf(), filtered_results[0].get_state1().get_tf(),
+               filtered_results[0].get_state2().get_tf(), filtered_results[0].get_state3().get_tf()]
     for res in filtered_results:
         res_params.append({
             'name': res.get_security().get_ticker(),
             'description': res.get_security().get_name(),
             'last_price': res.get_last_price(),
             'list_level': res.get_security().get_list_level(),
-            'trend_h1': res.get_h1_state().get_trend(),
-            'trend_h4': res.get_h4_state().get_trend(),
-            'trend_d1': res.get_d1_state().get_trend(),
-            'trend_w1': res.get_w1_state().get_trend(),
-            'style_h1': res.get_h1_state().get_style(),
-            'style_h4': res.get_h4_state().get_style(),
-            'style_d1': res.get_d1_state().get_style(),
-            'style_w1': res.get_w1_state().get_style(),
-            'potential_h1': res.get_h1_state().get_potential_str(),
-            'potential_h4': res.get_h4_state().get_potential_str(),
-            'potential_d1': res.get_d1_state().get_potential_str(),
-            'potential_w1': res.get_w1_state().get_potential_str(),
-            'img_h1': res.get_h1_state().get_image_path(parent_dir),
-            'img_h4': res.get_h4_state().get_image_path(parent_dir),
-            'img_d1': res.get_d1_state().get_image_path(parent_dir),
-            'img_w1': res.get_w1_state().get_image_path(parent_dir)
+            'trend0': res.get_state0().get_trend(),
+            'trend1': res.get_state1().get_trend(),
+            'trend2': res.get_state2().get_trend(),
+            'trend3': res.get_state3().get_trend(),
+            'style0': res.get_state0().get_style(),
+            'style1': res.get_state1().get_style(),
+            'style2': res.get_state2().get_style(),
+            'style3': res.get_state3().get_style(),
+            'potential0': res.get_state0().get_potential_str(),
+            'potential1': res.get_state1().get_potential_str(),
+            'potential2': res.get_state2().get_potential_str(),
+            'potential3': res.get_state3().get_potential_str(),
+            'img0': res.get_state0().get_image_path(parent_dir),
+            'img1': res.get_state1().get_image_path(parent_dir),
+            'img2': res.get_state2().get_image_path(parent_dir),
+            'img3': res.get_state3().get_image_path(parent_dir)
         })
 
     with open('scanner_template.tmpl', 'r') as file:
@@ -403,6 +509,9 @@ def print_scanner_results(description: str, results: List[ScannerResult]):
     print(f"Found {interesting_results_count} interesting results\n")
     print(f"Result is written to {out_file_path}")
 
+    if isFutures:
+        notifyResultsWithBot(interesting_results, parent_dir)
+
 
 async def stock_screen():
     connector = aiohttp.TCPConnector(force_close=True, limit=50, limit_per_host=10)
@@ -430,7 +539,7 @@ async def futures_screen():
         for security in securities:
             tasks.append(asyncio.create_task(get_futures_security_state(session, security)))
         results = await asyncio.gather(*tasks)
-        print_scanner_results("Futures", results)
+        print_scanner_results("Futures", results, True)
         end = time.time()
         total_time = end - start
         print(f"Execution completed in {str(total_time)} sec")
