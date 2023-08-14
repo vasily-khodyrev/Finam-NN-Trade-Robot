@@ -90,30 +90,30 @@ def send_last_results(_type: str,
     scan_list = data["scan_list"]
     general_msg = f"Total scanned {total_scanned}. Interesting: {interesting_results} ScanDate: {scan_date}"
     bot.send_message(message.from_user.id, general_msg)
+    if int(interesting_results) > 0:
+        for i in range(0, 3):
+            images = []
+            if i < len(scan_list):
+                stock = scan_list[i]
+                s_name = stock["name"]
+                s_desc = stock["description"]
+                s_price = stock["last_price"]
 
-    for i in range(0, 3):
-        images = []
-        if i < len(scan_list):
-            stock = scan_list[i]
-            s_name = stock["name"]
-            s_desc = stock["description"]
-            s_price = stock["last_price"]
-
-            _str = f"{s_name}:{s_desc} p:{s_price} "
-            states = stock["states"]
-            for state in states:
-                s_img = state["img"]
-                s_tf = state["tf"]
-                s_potential = state["potential"]
-                _str = f"{_str} {s_tf}:{s_potential}"
-                _img_str = f"{s_name}: price:{s_price} {s_tf}:{s_potential}"
-                if s_img:
-                    images.append(
-                        telebot.types.InputMediaPhoto(open(s_img, 'rb'), caption=_img_str)
-                    )
-            bot.send_message(message.from_user.id, _str)
-            if len(images) > 0:
-                bot.send_media_group(message.from_user.id, images)
+                _str = f"{s_name}:{s_desc} p:{s_price} "
+                states = stock["states"]
+                for state in states:
+                    s_img = state["img"]
+                    s_tf = state["tf"]
+                    s_potential = state["potential"]
+                    _str = f"{_str} {s_tf}:{s_potential}"
+                    _img_str = f"{s_name}: price:{s_price} {s_tf}:{s_potential}"
+                    if s_img:
+                        images.append(
+                            telebot.types.InputMediaPhoto(open(s_img, 'rb'), caption=_img_str)
+                        )
+                bot.send_message(message.from_user.id, _str)
+                if len(images) > 0:
+                    bot.send_media_group(message.from_user.id, images)
 
 
 def handler(signum, frame):

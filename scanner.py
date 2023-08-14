@@ -24,7 +24,7 @@ class ISSSecurity:
                  ticker: str,
                  name: str,
                  list_level: Optional[int] = 0,
-                 underlying: Optional[str] = "",
+                 underlying: Optional[str] = None,
                  last_date: Optional[datetime.datetime] = None):
         self._ticker = ticker
         self._name = name
@@ -42,7 +42,7 @@ class ISSSecurity:
         return self._list_level
 
     def get_underlying(self) -> Optional[str]:
-        return self._underlying
+        return self._underlying if self._underlying is not None else self.get_ticker()
 
     def get_last_date(self) -> Optional[datetime.datetime]:
         return self._last_date
@@ -98,7 +98,7 @@ class AssetState:
     def get_image_path(self, parent_dir: str) -> str:
         if self._image is not None:
             if self._file_path is None:
-                ticker = self._security.get_ticker()
+                ticker = self._security.get_underlying()
                 tf = self._tf
                 pic_dir = os.path.join(parent_dir, "pic")
                 if not os.path.exists(pic_dir):
@@ -107,6 +107,16 @@ class AssetState:
                 self._image.save(self._file_path)
             return self._file_path
         return ""
+
+    def save_image(self, parent_dir: str):
+        if self._image is not None:
+            ticker = self._security.get_underlying()
+            tf = self._tf
+            pic_dir = os.path.join(parent_dir, "pic")
+            if not os.path.exists(pic_dir):
+                os.makedirs(pic_dir)
+            __file_path = os.path.abspath(os.path.join(pic_dir, f"{ticker}-{tf}.png"))
+            self._image.save(__file_path)
 
     def get_interest(self) -> bool:
         return self._interest
@@ -174,6 +184,10 @@ class ScannerResult:
 
     def get_last_price(self) -> str:
         return "-" if self._last_price is None else "{:.2f}".format(self._last_price)
+
+    def saveImages(self, parent_dir: str):
+        for state in self._states:
+            state.save_image(parent_dir)
 
     def __repr__(self) -> str:
         return f"ScannerResult(symbol={self.get_security().get_ticker()}, lastPrice={self.get_last_price()})"
@@ -250,7 +264,7 @@ def get_change_trend(trend: Trend) -> Trend:
         return trend
 
 
-def get_potential(dataset: pd.DataFrame, futures: bool = False):
+def get_potential(dataset: pd.DataFrame):
     count = 0
     cur_trend = None
     reversed_dataset = dataset.iloc[::-1]
@@ -270,18 +284,15 @@ def get_potential(dataset: pd.DataFrame, futures: bool = False):
     last_low = last_row["low"].tolist()[0]
     last_vwma_fast = last_row["vwma_fast"].tolist()[0]
     last_vwma_slow = last_row["vwma_slow"].tolist()[0]
-    if futures:
-        if last_vwma_fast > last_vwma_slow and last_close < last_vwma_fast:
-            interest = True
-            potential = (last_vwma_fast - last_close) / last_close * 100
-    else:
-        if last_vwma_fast > last_vwma_slow >= last_close:
-            interest = True
-            potential = (last_vwma_fast - last_close) / last_close * 100
+
+    if last_vwma_fast > last_vwma_slow >= last_close:
+        interest = True
+        potential = (last_vwma_fast - last_close) / last_close * 100
+
     return cur_trend, interest, potential
 
 
-def get_state(security: ISSSecurity, tf: str, data_vwma: pd.DataFrame, futures: bool = False) -> AssetState:
+def get_state(security: ISSSecurity, tf: str, data_vwma: pd.DataFrame) -> AssetState:
     dataset = data_vwma.tail(256)
     has_data = not data_vwma.empty
     trend = None
@@ -289,7 +300,7 @@ def get_state(security: ISSSecurity, tf: str, data_vwma: pd.DataFrame, futures: 
     potential = 0.0
     img = None
     if has_data:
-        trend, interest, potential = get_potential(dataset, futures)
+        trend, interest, potential = get_potential(dataset)
         img = functions.create_image(dataset, True)
     return AssetState(security, tf, has_data, trend, img, interest, potential)
 
@@ -369,9 +380,9 @@ def update_interest(states: list[AssetState], check_next_only: bool = False):
 
 async def get_futures_security_state(session: aiohttp.ClientSession, security: ISSSecurity) -> ScannerResult:
     # M1 - for last 5 days
-    from_m1_date = (datetime.datetime.now() - datetime.timedelta(days=10)).strftime("%Y-%m-%d")
-    from_m10_date = (datetime.datetime.now() - datetime.timedelta(days=15)).strftime("%Y-%m-%d")
-    from_h1_date = (datetime.datetime.now() - datetime.timedelta(days=30)).strftime("%Y-%m-%d")
+    from_m1_date = (datetime.datetime.now() - datetime.timedelta(days=15)).strftime("%Y-%m-%d")
+    from_m10_date = (datetime.datetime.now() - datetime.timedelta(days=25)).strftime("%Y-%m-%d")
+    from_h1_date = (datetime.datetime.now() - datetime.timedelta(days=50)).strftime("%Y-%m-%d")
     data_m1 = await functions.get_futures_candles(session, security.get_ticker(), "M1", from_m1_date, None,
                                                   file_store=os.path.join("_scan", "csv", f"futures-{security.get_underlying()}_M1.csv"))
     data_m10 = await functions.get_futures_candles(session, security.get_ticker(), "M10", from_m10_date, None,
@@ -403,18 +414,24 @@ async def get_futures_security_state(session: aiohttp.ClientSession, security: I
         data_m30_vwma = functions.get_vwma(data_m30, 50, 100, 200, drop_nan=False)
     if not data_h1.empty:
         data_h1_vwma = functions.get_vwma(data_h1, 50, 100, 200, drop_nan=False)
-    _state_m1 = get_state(security, "M1", data_m1_vwma, False)
-    _state_m5 = get_state(security, "M5", data_m5_vwma, False)
-    _state_m15 = get_state(security, "M15", data_m15_vwma, False)
-    _state_m30 = get_state(security, "M30", data_m30_vwma, False)
-    _state_h1 = get_state(security, "H1", data_h1_vwma, False)
+    _state_m1 = get_state(security, "M1", data_m1_vwma)
+    _state_m5 = get_state(security, "M5", data_m5_vwma)
+    _state_m15 = get_state(security, "M15", data_m15_vwma)
+    _state_m30 = get_state(security, "M30", data_m30_vwma)
+    _state_h1 = get_state(security, "H1", data_h1_vwma)
     update_interest([_state_m1, _state_m5, _state_m15, _state_h1], check_next_only=True)
-    return ScannerResult(security,
-                         last_price,
-                         [_state_m1, _state_m5, _state_m15, _state_m30, _state_h1])
+    _result = ScannerResult(security,
+                            last_price,
+                            [_state_m1, _state_m5, _state_m15, _state_m30, _state_h1])
+    parent_dir = os.path.join("_scan", "csv", "futures")
+    _result.saveImages(parent_dir)
+    return _result
 
 
 def notifyResultsWithBot(interesting_results: list[ScannerResult], parent_dir: str):
+    if len(interesting_results) == 0:
+        return
+
     BOT_TOKEN = os.environ.get('BOT_TOKEN')
     OWNER_TELE_ID = int(os.environ.get('OWNER_TELE_ID'))
     if BOT_TOKEN is None or len(BOT_TOKEN) == 0:
@@ -460,21 +477,25 @@ def print_scanner_results(description: str, results: List[ScannerResult], isFutu
     total_with_data_count = len(filtered_results)
     interesting_results = [x for x in filtered_results if x.hasInterest()]
     interesting_results_count = len(interesting_results)
+
+    # print out all futures if there's nothing interesting found
+    reportable_results = filtered_results if isFutures and len(interesting_results) == 0 else interesting_results
+
     # Sorting max(potential) -> list level -> ticker
-    filtered_results = sorted(interesting_results,
-                              key=lambda a: (
-                                  max(b.get_potential() for b in a.get_states()),
-                                  a.get_security().get_list_level(),
-                                  a.get_security().get_ticker()
-                              ),
-                              reverse=True)
+    reportable_results = sorted(reportable_results,
+                                key=lambda a: (
+                                    max(b.get_potential() for b in a.get_states()),
+                                    a.get_security().get_list_level(),
+                                    a.get_security().get_ticker()
+                                ),
+                                reverse=True)
 
     res_params = []
     tfs = ['H1', 'H4', 'D1', 'W1']
-    if len(filtered_results) > 0:
-        _states = filtered_results[0].get_states()
+    if len(reportable_results) > 0:
+        _states = reportable_results[0].get_states()
         tfs = [x.get_tf() for x in _states]
-    for res in filtered_results:
+    for res in reportable_results:
         res_params.append({
             'name': res.get_security().get_ticker(),
             'description': res.get_security().get_name(),
@@ -501,7 +522,7 @@ def print_scanner_results(description: str, results: List[ScannerResult], isFutu
     output = chevron.render(template=template, data=data)
     out_file_path = os.path.join(parent_dir, f"index.html")
     out_file = open(out_file_path, "w", encoding="utf-8")
-    n = out_file.write(output)
+    out_file.write(output)
     out_file.close()
 
     jsonString = json.dumps(data)
