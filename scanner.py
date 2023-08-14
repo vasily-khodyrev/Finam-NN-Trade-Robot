@@ -355,10 +355,6 @@ def update_interest(states: list[AssetState], check_next_only: bool = False):
                 _next_state = states[_idx+1]
                 if not isSameTrend(_state.get_trend_value(), _next_state.get_trend_value()):
                     _state.updateInterest(False)
-                if _idx > 0:
-                    _prev_state = states[_idx - 1]
-                    if not isSameTrend(_state.get_trend_value(), _prev_state.get_trend_value()):
-                        _state.updateInterest(False)
             else:
                 _same_higher_trend = True
                 for _back_idx in range(_idx + 1, len(states)):
@@ -376,9 +372,12 @@ async def get_futures_security_state(session: aiohttp.ClientSession, security: I
     from_m1_date = (datetime.datetime.now() - datetime.timedelta(days=10)).strftime("%Y-%m-%d")
     from_m10_date = (datetime.datetime.now() - datetime.timedelta(days=15)).strftime("%Y-%m-%d")
     from_h1_date = (datetime.datetime.now() - datetime.timedelta(days=30)).strftime("%Y-%m-%d")
-    data_m1 = await functions.get_futures_candles(session, security.get_ticker(), "M1", from_m1_date, None)
-    data_m10 = await functions.get_futures_candles(session, security.get_ticker(), "M10", from_m10_date, None)
-    data_h1 = await functions.get_futures_candles(session, security.get_ticker(), "H1", from_h1_date, None)
+    data_m1 = await functions.get_futures_candles(session, security.get_ticker(), "M1", from_m1_date, None,
+                                                  file_store=os.path.join("_scan", "csv", f"futures-{security.get_underlying()}_M1.csv"))
+    data_m10 = await functions.get_futures_candles(session, security.get_ticker(), "M10", from_m10_date, None,
+                                                   file_store=os.path.join("_scan", "csv", f"futures-{security.get_underlying()}_M10.csv"))
+    data_h1 = await functions.get_futures_candles(session, security.get_ticker(), "H1", from_h1_date, None,
+                                                  file_store=os.path.join("_scan", "csv", f"futures-{security.get_underlying()}_H1.csv"))
 
     print(f"Received data for {security.get_ticker()}")
     data_m5 = pd.DataFrame()
@@ -447,7 +446,7 @@ def notifyResultsWithBot(interesting_results: list[ScannerResult], parent_dir: s
         if len(_medias) > 0:
             # send charts overview
             bot.send_media_group(OWNER_TELE_ID, _medias)
-
+    #stop bot
     bot.stop_bot()
 
 

@@ -183,8 +183,23 @@ def stop_redirect_output_from_screen_to_file():
         pass
 
 
-async def get_futures_candles(session, ticker: str, timeframe: str, start: str, end: Optional[str] = None):
+async def get_futures_candles(session,
+                              ticker: str,
+                              timeframe: str,
+                              start: str,
+                              end: Optional[str] = None,
+                              file_store: Optional[str] = None):
     """Get candles for FUTURES from MOEX."""
+    old_data = pd.DataFrame(data=None, columns=["datetime", "open", "high", "low", "close", "volume"])
+    if file_store is not None:
+        file_exists = os.path.isfile(file_store)
+        if file_exists:  # Если файл существует
+            old_data = load_candles(file_store)
+            if len(old_data) > 0:
+                last_date = old_data["datetime"].iloc[-1]
+                requested_start = datetime.datetime.strptime(start, '%Y-%m-%d')
+                if requested_start < last_date:
+                    start = last_date.strftime("%Y-%m-%d")
     tf = get_timeframe_moex(timeframe)
     data = await aiomoex.get_market_candles(
         session,
@@ -196,12 +211,21 @@ async def get_futures_candles(session, ticker: str, timeframe: str, start: str, 
         engine="futures"
     )
     df = pd.DataFrame(data)
-    df['datetime'] = pd.to_datetime(df['begin'], format='%Y-%m-%d %H:%M:%S')
-    # для M1, M10, H1 - приводим дату свечи в правильный вид
-    if tf in [1, 10, 60]:
-        df['datetime'] = df['datetime'].apply(lambda x: x + datetime.timedelta(minutes=tf))
-    df = df[["datetime", "open", "high", "low", "close", "volume"]].copy()
-    return df
+    # Check if data is present - return empty dataframe with columns
+    if df.empty:
+        df = pd.DataFrame(data=None, columns=["datetime", "open", "high", "low", "close", "volume"])
+    else:
+        df['datetime'] = pd.to_datetime(df['begin'], format='%Y-%m-%d %H:%M:%S')
+        # для M1, M10, H1 - приводим дату свечи в правильный вид
+        if tf in [1, 10, 60]:
+            df['datetime'] = df['datetime'].apply(lambda x: x + datetime.timedelta(minutes=tf))
+        df = df[["datetime", "open", "high", "low", "close", "volume"]].copy()
+    full_data = df
+    if file_store is not None:
+        concat_data = pd.concat([old_data, df])
+        full_data = concat_data.drop_duplicates(subset=["datetime"], keep='last').reset_index(drop=True)
+        store_candles(full_data, file_store)
+    return full_data
 
 
 async def get_stock_candles(session: aiohttp.ClientSession,
