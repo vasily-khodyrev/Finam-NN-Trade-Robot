@@ -344,7 +344,7 @@ def isSameTrend(trend1: Trend, trend2: Trend):
     return isUp1 == isUp2
 
 
-def update_interest(states: list[AssetState], check_next_only: bool):
+def update_interest(states: list[AssetState], check_next_only: bool = False):
     if len(states) < 2:
         return
     for _idx in reversed(range(0, len(states) - 1)):
@@ -355,6 +355,10 @@ def update_interest(states: list[AssetState], check_next_only: bool):
                 _next_state = states[_idx+1]
                 if not isSameTrend(_state.get_trend_value(), _next_state.get_trend_value()):
                     _state.updateInterest(False)
+                if _idx > 0:
+                    _prev_state = states[_idx - 1]
+                    if not isSameTrend(_state.get_trend_value(), _prev_state.get_trend_value()):
+                        _state.updateInterest(False)
             else:
                 _same_higher_trend = True
                 for _back_idx in range(_idx + 1, len(states)):
