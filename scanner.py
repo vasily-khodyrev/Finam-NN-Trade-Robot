@@ -309,13 +309,14 @@ async def get_stock_security_state(session: aiohttp.ClientSession, security: ISS
     # 2 month for 1H ( 6 to be converted to 4H)
     from_h1_date = (datetime.datetime.now() - datetime.timedelta(days=150)).strftime("%Y-%m-%d")
     # 1 year for 1D
-    from_d1_date = (datetime.datetime.now() - datetime.timedelta(days=365)).strftime("%Y-%m-%d")
+    from_d1_date = (datetime.datetime.now() - datetime.timedelta(days=365*2)).strftime("%Y-%m-%d")
     # 8 years for 1W
     from_w1_date = (datetime.datetime.now() - datetime.timedelta(days=365*8)).strftime("%Y-%m-%d")
-    data_d1 = await functions.get_stock_candles(session, security.get_ticker(), "D1", from_d1_date, None,
-                                                file_store=os.path.join("_scan", "csv", f"stock-{security.get_ticker()}_D1.csv"))
     data_h1 = await functions.get_stock_candles(session, security.get_ticker(), "H1", from_h1_date, None,
                                                 file_store=os.path.join("_scan", "csv", f"stock-{security.get_ticker()}_H1.csv"))
+    data_d1 = await functions.get_stock_candles(session, security.get_ticker(), "D1", from_d1_date, None,
+                                                file_store=os.path.join("_scan", "csv",
+                                                                        f"stock-{security.get_ticker()}_D1.csv"))
     data_w1 = await functions.get_stock_candles(session, security.get_ticker(), "W1", from_w1_date, None,
                                                 file_store=os.path.join("_scan", "csv", f"stock-{security.get_ticker()}_W1.csv"))
     print(f"Received data for {security.get_ticker()} H1-{'OK' if not data_h1.empty else 'NOK'} D1-{'OK' if not data_d1.empty else 'NOK'} W1-{'OK' if not data_w1.empty else 'NOK'}")
