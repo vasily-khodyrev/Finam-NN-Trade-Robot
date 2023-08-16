@@ -458,7 +458,7 @@ async def get_futures_security_state(session: aiohttp.ClientSession, security: I
     _state_m15 = get_state(security, "M15", data_m15_vwma)
     _state_m30 = get_state(security, "M30", data_m30_vwma)
     _state_h1 = get_state(security, "H1", data_h1_vwma)
-    _states = [_state_m1, _state_m5, _state_m15, _state_h1]
+    _states = [_state_m1, _state_m5, _state_m15, _state_m30, _state_h1]
     update_interest(_states, check_next_only=True)
     _result = ScannerResult(security, last_price, _states)
     parent_dir = os.path.join("_scan", "csv", "futures")
@@ -535,7 +535,7 @@ def print_scanner_results(description: str, results: List[ScannerResult], isFutu
         tfs = [x.get_tf() for x in _states]
     for res in reportable_results:
         res_params.append({
-            'name': res.get_security().get_ticker(),
+            'name': res.get_security().get_underlying(),
             'description': res.get_security().get_name(),
             'last_price': res.get_last_price(),
             'list_level': res.get_security().get_list_level(),
