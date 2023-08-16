@@ -8,7 +8,6 @@ img {
   border: 1px solid #ddd; /* Gray border */
   border-radius: 4px;  /* Rounded border */
   padding: 5px; /* Some padding */
-  width: 150px; /* Set a small width */
   display: flex;
 }
 
@@ -42,6 +41,36 @@ th {
 }
 
 </style>
+<script type="text/javascript" >
+  function onImageIn(event) {
+    var x = document.getElementById("preview");
+    var target = event.target
+    if (!target['data-id']) {
+        target['data-id'] = ''+new Date().getTime();
+    }
+    var img = target.cloneNode();
+    img.width = "512";
+    img.height = "512";
+    if (x.lastChild) {
+        var lastChild = x.lastChild;
+        if (target['data-id'] != lastChild['data-id']) {
+            while (x.lastChild) {
+              x.removeChild(x.lastChild);
+            }
+            x.appendChild(img);
+        }
+    } else {
+        x.appendChild(img);
+    }
+    x.style.top = '' + (window.scrollY + 40) + 'px';
+    x.style.display = '';
+  }
+
+  function onImageOut(event) {
+    var x = document.getElementById("preview");
+    x.style.display = 'none';
+  }
+</script>
 </head>
 
 <body>
@@ -80,7 +109,7 @@ th {
 
    {{#states}}
    <td class="center-text {{style}}">
-        <a href="file://{{img}}"><img width="128" height="128" src="file://{{img}}"/></a>
+        <a href="file://{{img}}"><img width="128" height="128" onmouseenter="onImageIn(event)" onmouseleave="onImageOut(event)" src="file://{{img}}"/></a>
         <span>{{trend}} - {{potential}}</span>
    </td>
    {{/states}}
@@ -90,5 +119,14 @@ th {
 </tr>
 {{/scan_list}}
 </table>
+<div style="
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    width: inherit;
+    height: inherit;
+    pointer-events: none;
+    display: none;
+" id="preview"></div>
 </body>
 </html>
