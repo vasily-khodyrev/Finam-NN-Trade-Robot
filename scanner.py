@@ -70,7 +70,8 @@ class AssetState:
                  trend: Trend,
                  image: Image,
                  interest: bool,
-                 potential: Optional[float] = None):
+                 potential: Optional[float] = None,
+                 potential_trend: Optional[Trend] = None):
         self._security = security
         self._tf = tf
         self._status = status
@@ -79,6 +80,10 @@ class AssetState:
         self._interest = interest
         self._potential = potential
         self._file_path = None
+        self._potential_trend = potential_trend
+
+    def get_security(self) -> ISSSecurity:
+        return self._security
 
     def get_status(self) -> bool:
         return self._status
@@ -88,6 +93,9 @@ class AssetState:
 
     def get_trend_value(self) -> Trend:
         return self._trend
+
+    def get_potential_trend_value(self) -> Optional[Trend]:
+        return self._potential_trend
 
     def get_trend(self) -> str:
         return self._trend.name if self._trend is not None else "-"
@@ -292,17 +300,35 @@ def get_potential(dataset: pd.DataFrame):
     return cur_trend, interest, potential
 
 
+def get_potential_trend_change(dataset: pd.DataFrame):
+    if dataset.empty or len(dataset) < 2:
+        return None
+    last_rows = dataset.tail(2)
+    last_vwma_fast = last_rows["vwma_fast"].tolist()
+    last_vwma_slow = last_rows["vwma_slow"].tolist()
+    delta_fast = last_vwma_fast[1] - last_vwma_fast[0]
+    delta_slow = last_vwma_slow[1] - last_vwma_slow[0]
+    if delta_fast > 0 and delta_fast * delta_slow > 0:
+        return Trend.UP
+    if delta_fast < 0 < delta_fast * delta_slow:
+        return Trend.DOWN
+
+    return Trend.CROSS
+
+
 def get_state(security: ISSSecurity, tf: str, data_vwma: pd.DataFrame) -> AssetState:
     dataset = data_vwma.tail(256)
     has_data = not data_vwma.empty
     trend = None
     interest = False
     potential = 0.0
+    potential_trend = None
     img = None
     if has_data:
         trend, interest, potential = get_potential(dataset)
+        potential_trend = get_potential_trend_change(dataset)
         img = functions.create_image(dataset, True)
-    return AssetState(security, tf, has_data, trend, img, interest, potential)
+    return AssetState(security, tf, has_data, trend, img, interest, potential, potential_trend=potential_trend)
 
 
 async def get_stock_security_state(session: aiohttp.ClientSession, security: ISSSecurity) -> ScannerResult:
@@ -348,8 +374,12 @@ async def get_stock_security_state(session: aiohttp.ClientSession, security: ISS
                          ])
 
 
-def isSameTrend(trend1: Trend, trend2: Trend):
+def isSameTrend(asset1: AssetState, asset2: AssetState, check_potential1: bool = False, check_potential2: bool = False):
+    trend1 = asset1.get_potential_trend_value() if check_potential1 else asset1.get_trend_value()
+    trend2 = asset2.get_potential_trend_value() if check_potential2 else asset2.get_trend_value()
     if trend1 is None or trend2 is None:
+        return False
+    if trend1 == Trend.CROSS or trend2 == Trend.CROSS:
         return False
     isUp1 = trend1 == Trend.UP or trend1 == Trend.CHG_UP
     isUp2 = trend2 == Trend.UP or trend2 == Trend.CHG_UP
@@ -359,24 +389,32 @@ def isSameTrend(trend1: Trend, trend2: Trend):
 def update_interest(states: list[AssetState], check_next_only: bool = False):
     if len(states) < 2:
         return
+    #Remove interest on the highest state - it should be just a reference
+    states[len(states) - 1].updateInterest(False)
+
+    # Remove interest on the lowest state - it should be just a reference
+    states[0].updateInterest(False)
+
     for _idx in reversed(range(0, len(states) - 1)):
         _state = states[_idx]
         if _state.get_interest():
-            _trend = _state.get_trend()
             if check_next_only:
                 _next_state = states[_idx+1]
-                if not isSameTrend(_state.get_trend_value(), _next_state.get_trend_value()):
+                _first_state = states[0]
+                if not (isSameTrend(_state, _next_state) and isSameTrend(_state, _first_state, check_potential2=True)):
                     _state.updateInterest(False)
             else:
                 _same_higher_trend = True
                 for _back_idx in range(_idx + 1, len(states)):
                     _highState = states[_back_idx]
-                    if not isSameTrend(_state.get_trend_value(), _highState.get_trend_value()):
+                    if not isSameTrend(_state, _highState):
                         _same_higher_trend = False
                         break
                 if not _same_higher_trend:
                     # since upper trends is different - it's not a correction at the moment
                     _state.updateInterest(False)
+    res = [{s.get_tf(): s.get_interest()} for s in states]
+    print(f"{states[0].get_security().get_underlying()} - {res}")
 
 
 async def get_futures_security_state(session: aiohttp.ClientSession, security: ISSSecurity) -> ScannerResult:
@@ -420,10 +458,9 @@ async def get_futures_security_state(session: aiohttp.ClientSession, security: I
     _state_m15 = get_state(security, "M15", data_m15_vwma)
     _state_m30 = get_state(security, "M30", data_m30_vwma)
     _state_h1 = get_state(security, "H1", data_h1_vwma)
-    update_interest([_state_m1, _state_m5, _state_m15, _state_h1], check_next_only=True)
-    _result = ScannerResult(security,
-                            last_price,
-                            [_state_m1, _state_m5, _state_m15, _state_m30, _state_h1])
+    _states = [_state_m1, _state_m5, _state_m15, _state_h1]
+    update_interest(_states, check_next_only=True)
+    _result = ScannerResult(security, last_price, _states)
     parent_dir = os.path.join("_scan", "csv", "futures")
     _result.saveImages(parent_dir)
     return _result
@@ -453,7 +490,7 @@ def notifyResultsWithBot(interesting_results: list[ScannerResult], parent_dir: s
             _potential = state.get_potential_str()
             _msg = f"{_security.get_ticker()}-{_security.get_name()} Price: {_last_price} Potential-{_tf}: {_potential}"
             _img_path = state.get_image_path(parent_dir)
-            if state.get_interest():
+            if state.get_interest() or state.get_potential() > 0.0:
                 _str = _str + f" {_tf}:{_potential}"
             if _img_path:
                 _medias.append(
