@@ -578,7 +578,7 @@ def print_scanner_results(description: str, results: List[ScannerResult], isFutu
 
 
 async def stock_screen():
-    connector = aiohttp.TCPConnector(force_close=True, limit=5, limit_per_host=5)
+    connector = aiohttp.TCPConnector(force_close=False, use_dns_cache=False, limit=1, limit_per_host=1)
     async with aiohttp.ClientSession(connector=connector) as session:
         start = time.time()
         securities = await get_moex_securities(session)
