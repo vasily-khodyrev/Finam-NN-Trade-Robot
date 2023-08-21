@@ -3,6 +3,7 @@ import io
 import math
 import os
 import sys
+import time
 from typing import Optional, Tuple, Callable
 
 import aiohttp
@@ -17,6 +18,11 @@ from PIL import Image
 from plotly.subplots import make_subplots
 from sklearn.preprocessing import MinMaxScaler
 
+from FinamPy import FinamPy
+from FinamPy.proto.tradeapi.v1.candles_pb2 import IntradayCandleTimeFrame, IntradayCandleInterval
+from google.protobuf.timestamp_pb2 import Timestamp
+from google.protobuf.json_format import MessageToDict
+
 
 def get_timeframe_moex(tf: str):
     """Функция получения типа таймфрейма в зависимости от направления"""
@@ -24,6 +30,17 @@ def get_timeframe_moex(tf: str):
     tfs = {"M1": 1, "M10": 10, "H1": 60, "D1": 24, "W1": 7, "MN1": 31, "Q1": 4}
     if tf in tfs: return tfs[tf]
     return False
+
+
+def get_timeframe_finam(tf: str) -> Optional[IntradayCandleTimeFrame]:
+    """Функция получения типа таймфрейма в зависимости от направления (для FINAM)"""
+    tfs = {"M1": IntradayCandleTimeFrame.INTRADAYCANDLE_TIMEFRAME_M1,
+           "M5": IntradayCandleTimeFrame.INTRADAYCANDLE_TIMEFRAME_M5,
+           "M15": IntradayCandleTimeFrame.INTRADAYCANDLE_TIMEFRAME_M15,
+           "H1": IntradayCandleTimeFrame.INTRADAYCANDLE_TIMEFRAME_H1}
+    if tf in tfs:
+        return tfs[tf]
+    return None
 
 
 def transform_moex_to_needed_tf(tf: str, aggregation: int, src_df: pd.DataFrame) -> pd.DataFrame:
@@ -198,23 +215,37 @@ async def get_futures_candles(session,
             if len(old_data) > 0:
                 last_date = old_data["datetime"].iloc[-1]
                 requested_start = datetime.datetime.strptime(start, '%Y-%m-%d')
-                if requested_start < last_date:
-                    start = last_date.strftime("%Y-%m-%d")
+                #always request from last date in file to keep it solid
+                start = last_date.strftime("%Y-%m-%d")
+
     tf = get_timeframe_moex(timeframe)
-    data = await aiomoex.get_market_candles(
-        session,
-        ticker,
-        interval=tf,
-        start=start,
-        end=end,
-        market="forts",
-        engine="futures"
-    )
-    df = pd.DataFrame(data)
-    # Check if data is present - return empty dataframe with columns
-    if df.empty:
-        df = pd.DataFrame(data=None, columns=["datetime", "open", "high", "low", "close", "volume"])
+    _get_moex_data = True
+    if not old_data.empty:
+        _last_date = old_data["datetime"].iloc[-1]
+        _now = datetime.datetime.now()
+        _delta_min = int((_now - _last_date).total_seconds() // 60)
+        if tf == 1:
+            _get_moex_data = _delta_min > 15
+        if tf == 60:
+            _get_moex_data = _delta_min > 60
+
+    if _get_moex_data:
+        data = await aiomoex.get_market_candles(
+            session,
+            ticker,
+            interval=tf,
+            start=start,
+            end=end,
+            market="forts",
+            engine="futures"
+        )
+        df = pd.DataFrame(data)
+        if df.empty:
+            df = pd.DataFrame(data=None, columns=["datetime", "open", "high", "low", "close", "volume"])
     else:
+        df = pd.DataFrame(data=None, columns=["datetime", "open", "high", "low", "close", "volume"])
+    # Check if data is present - return empty dataframe with columns
+    if not df.empty:
         df['datetime'] = pd.to_datetime(df['begin'], format='%Y-%m-%d %H:%M:%S')
         # для M1, M10, H1 - приводим дату свечи в правильный вид
         if tf in [1, 10, 60]:
@@ -224,8 +255,71 @@ async def get_futures_candles(session,
     if file_store is not None:
         concat_data = pd.concat([old_data, df])
         full_data = concat_data.drop_duplicates(subset=["datetime"], keep='last').reset_index(drop=True)
+    if tf == 1:
+        _last_date = full_data["datetime"].iloc[-1]
+        _now = datetime.datetime.now()
+        _delta_min = int((_now - _last_date).total_seconds() // 60)
+        if _delta_min > 0:
+            print(f"{ticker}-{timeframe} MOEX delta is {_delta_min} min")
+            _latest_data = get_finam_futures_intraday_candles(ticker, timeframe, _delta_min + 5)
+            concat_data = pd.concat([full_data, _latest_data])
+            full_data = concat_data.drop_duplicates(subset=["datetime"], keep='last').reset_index(drop=True)
+    if file_store is not None:
         store_candles(full_data, file_store)
     return full_data
+
+
+def get_finam_futures_intraday_candles(ticker: str, tf: str, candles_count: int = 500) -> pd.DataFrame:
+    start = time.time()
+    FINAM_TOKEN = os.environ.get('FINAM_VIEW_TOKEN')
+    fp_provider = FinamPy(FINAM_TOKEN)
+    result = pd.DataFrame(data=None, columns=["datetime", "open", "high", "low", "close", "volume"])
+    try:
+        time_frame = get_timeframe_finam(tf)
+        next_utc_bar_date = fp_provider.msk_to_utc_datetime(datetime.datetime.now() + datetime.timedelta(minutes=2), True)
+        date_to = Timestamp(seconds=int(next_utc_bar_date.timestamp()), nanos=next_utc_bar_date.microsecond * 1_000)
+        interval = IntradayCandleInterval(count=candles_count, to=date_to)
+        _result = fp_provider.get_intraday_candles("FUT", ticker, time_frame, interval)
+        if _result is not None:
+            new_bars_dict = MessageToDict(
+                _result,
+                including_default_value_fields=True)['candles']
+            _dates = []
+            _opens = []
+            _highs = []
+            _lows = []
+            _closes = []
+            _volumes = []
+            for new_bar in new_bars_dict:
+                _dates.append(fp_provider.utc_to_msk_datetime(datetime.datetime.fromisoformat(new_bar['timestamp'][:-1])))
+                _opens.append(round(int(new_bar['open']['num']) * 10 ** -int(new_bar['open']['scale']),
+                                    int(new_bar['open']['scale'])))
+                _highs.append(round(int(new_bar['high']['num']) * 10 ** -int(new_bar['high']['scale']),
+                                    int(new_bar['high']['scale'])))
+                _lows.append(round(int(new_bar['low']['num']) * 10 ** -int(new_bar['low']['scale']),
+                                   int(new_bar['low']['scale'])))
+                _closes.append(round(int(new_bar['close']['num']) * 10 ** -int(new_bar['close']['scale']),
+                                     int(new_bar['close']['scale'])))
+                _volumes.append(int(new_bar['volume']))
+            _dict = {'datetime': _dates,
+                     'open': _opens,
+                     'high': _highs,
+                     'low': _lows,
+                     'close': _closes,
+                     'volume': _volumes,
+                     }
+            result = pd.DataFrame(_dict)
+            _moex_tf = get_timeframe_moex(tf)
+            if _moex_tf in [1, 10, 60]:
+                result['datetime'] = result['datetime'].apply(lambda x: x + datetime.timedelta(minutes=_moex_tf))
+        else:
+            print(f"No candles received for {ticker}")
+    finally:
+        fp_provider.close_channel()
+    end_0 = time.time()
+    total_time = end_0 - start
+    print(f"get_finam_futures_intraday_candles {ticker} - {tf} - {candles_count} candles -  completed in {total_time:.2f} sec")
+    return result
 
 
 async def get_stock_candles(session: aiohttp.ClientSession,
@@ -244,8 +338,9 @@ async def get_stock_candles(session: aiohttp.ClientSession,
             if len(old_data) > 0:
                 last_date = old_data["datetime"].iloc[-1]
                 requested_start = datetime.datetime.strptime(start, '%Y-%m-%d')
-                if requested_start < last_date:
-                    start = last_date.strftime("%Y-%m-%d")
+                #if requested_start < last_date:
+                #always request data from latest in file to keep it solid
+                start = last_date.strftime("%Y-%m-%d")
     data = await aiomoex.get_market_candles(session, ticker, interval=tf, start=start, end=end)  # M10
     df = pd.DataFrame(data)
     # Check if data is present - return empty dataframe with columns

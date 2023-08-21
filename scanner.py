@@ -419,46 +419,47 @@ def update_interest(states: list[AssetState], check_next_only: bool = False):
 
 async def get_futures_security_state(session: aiohttp.ClientSession, security: ISSSecurity) -> ScannerResult:
     # M1 - for last 5 days
-    from_m1_date = (datetime.datetime.now() - datetime.timedelta(days=15)).strftime("%Y-%m-%d")
-    from_m10_date = (datetime.datetime.now() - datetime.timedelta(days=25)).strftime("%Y-%m-%d")
+    from_m1_date = (datetime.datetime.now() - datetime.timedelta(days=25)).strftime("%Y-%m-%d")
     from_h1_date = (datetime.datetime.now() - datetime.timedelta(days=50)).strftime("%Y-%m-%d")
     data_m1 = await functions.get_futures_candles(session, security.get_ticker(), "M1", from_m1_date, None,
                                                   file_store=os.path.join("_scan", "csv", f"futures-{security.get_underlying()}_M1.csv"))
-    data_m10 = await functions.get_futures_candles(session, security.get_ticker(), "M10", from_m10_date, None,
-                                                   file_store=os.path.join("_scan", "csv", f"futures-{security.get_underlying()}_M10.csv"))
     data_h1 = await functions.get_futures_candles(session, security.get_ticker(), "H1", from_h1_date, None,
                                                   file_store=os.path.join("_scan", "csv", f"futures-{security.get_underlying()}_H1.csv"))
 
     print(f"Received data for {security.get_ticker()}")
     data_m5 = pd.DataFrame()
+    data_m10 = pd.DataFrame()
     data_m15 = pd.DataFrame()
     data_m30 = pd.DataFrame()
     last_price = None
     if not data_m1.empty:
         last_price = data_m1.tail(1)["close"].tolist()[0]
         data_m5 = functions.aggregate(data_m1, 5)
+        data_m10 = functions.aggregate(data_m1, 10)
         data_m15 = functions.aggregate(data_m1, 15)
-    if not data_m10.empty:
-        data_m30 = functions.aggregate(data_m10, 30)
+        data_m30 = functions.aggregate(data_m1, 30)
+
     data_m1_vwma = pd.DataFrame()
     data_m5_vwma = pd.DataFrame()
+    data_m10_vwma = pd.DataFrame()
     data_m15_vwma = pd.DataFrame()
     data_m30_vwma = pd.DataFrame()
     data_h1_vwma = pd.DataFrame()
     if not data_m1.empty:
         data_m1_vwma = functions.get_vwma(data_m1, 50, 100, 200, drop_nan=False)
         data_m5_vwma = functions.get_vwma(data_m5, 50, 100, 200, drop_nan=False)
+        data_m10_vwma = functions.get_vwma(data_m10, 50, 100, 200, drop_nan=False)
         data_m15_vwma = functions.get_vwma(data_m15, 50, 100, 200, drop_nan=False)
-    if not data_m30.empty:
         data_m30_vwma = functions.get_vwma(data_m30, 50, 100, 200, drop_nan=False)
     if not data_h1.empty:
         data_h1_vwma = functions.get_vwma(data_h1, 50, 100, 200, drop_nan=False)
     _state_m1 = get_state(security, "M1", data_m1_vwma)
     _state_m5 = get_state(security, "M5", data_m5_vwma)
+    _state_m10 = get_state(security, "M10", data_m10_vwma)
     _state_m15 = get_state(security, "M15", data_m15_vwma)
     _state_m30 = get_state(security, "M30", data_m30_vwma)
     _state_h1 = get_state(security, "H1", data_h1_vwma)
-    _states = [_state_m1, _state_m5, _state_m15, _state_m30, _state_h1]
+    _states = [_state_m1, _state_m5, _state_m10, _state_m15, _state_m30, _state_h1]
     update_interest(_states, check_next_only=True)
     _result = ScannerResult(security, last_price, _states)
     parent_dir = os.path.join("_scan", "csv", "futures")
@@ -596,7 +597,8 @@ async def futures_screen():
     connector = aiohttp.TCPConnector(force_close=True, limit=5, limit_per_host=5)
     async with aiohttp.ClientSession(connector=connector) as session:
         start = time.time()
-        securities = await get_moex_futures_securities(session, ["Si", "BR", "GOLD", "NG", "MIX", "RTS", "SILV"])
+        #securities = await get_moex_futures_securities(session, ["Si", "BR", "GOLD", "NG", "MIX", "RTS", "SILV"])
+        securities = await get_moex_futures_securities(session, ["Si", "BR", "GOLD", "NG"])
         print(f"Found {len(securities)} tickers on MOEX")
         tasks = []
         for security in securities:
