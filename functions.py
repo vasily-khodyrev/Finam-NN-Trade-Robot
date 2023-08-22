@@ -213,10 +213,14 @@ async def get_futures_candles(session,
         if file_exists:  # Если файл существует
             old_data = load_candles(file_store)
             if len(old_data) > 0:
+                first_date = old_data["datetime"].iloc[0]
                 last_date = old_data["datetime"].iloc[-1]
                 requested_start = datetime.datetime.strptime(start, '%Y-%m-%d')
-                #always request from last date in file to keep it solid
-                start = last_date.strftime("%Y-%m-%d")
+                if first_date >= requested_start:
+                    old_data = pd.DataFrame(data=None, columns=["datetime", "open", "high", "low", "close", "volume"])
+                else:
+                    #always request from last date in file to keep it solid
+                    start = last_date.strftime("%Y-%m-%d")
 
     tf = get_timeframe_moex(timeframe)
     _get_moex_data = True
@@ -336,11 +340,16 @@ async def get_stock_candles(session: aiohttp.ClientSession,
         if file_exists:  # Если файл существует
             old_data = load_candles(file_store)
             if len(old_data) > 0:
+                first_date = old_data["datetime"].iloc[0]
                 last_date = old_data["datetime"].iloc[-1]
                 requested_start = datetime.datetime.strptime(start, '%Y-%m-%d')
-                #if requested_start < last_date:
-                #always request data from latest in file to keep it solid
-                start = last_date.strftime("%Y-%m-%d")
+                if first_date >= requested_start:
+                    #drop stored data since no more can be used
+                    old_data = pd.DataFrame(data=None, columns=["datetime", "open", "high", "low", "close", "volume"])
+                else:
+                    #if requested_start < last_date:
+                    #always request data from latest in file to keep it solid
+                    start = last_date.strftime("%Y-%m-%d")
     data = await aiomoex.get_market_candles(session, ticker, interval=tf, start=start, end=end)  # M10
     df = pd.DataFrame(data)
     # Check if data is present - return empty dataframe with columns
@@ -405,6 +414,8 @@ def get_vwma(df_in: pd.DataFrame,
              period_vwma_vfast: Optional[int] = None,
              period_vwma_fast: Optional[int] = None,
              period_vwma_slow: Optional[int] = None,
+             period_ema_fast: Optional[int] = None,
+             period_ema_slow: Optional[int] = None,
              drop_nan: Optional[bool] = True) -> pd.DataFrame:
     """Calculate Volume Weighted Moving Average"""
     df = df_in.copy()
@@ -429,6 +440,12 @@ def get_vwma(df_in: pd.DataFrame,
         df['volume_sum_slow'] = df['volume'].rolling(period_vwma_slow).sum()
         df['vwma_slow'] = df['cv_sum_slow'] / df['volume_sum_slow']  # формируем VWMA slow
         result_columns.append("vwma_slow")
+    if period_ema_fast is not None:
+        df['ema_fast'] = df['close'].rolling(period_ema_fast).mean()
+        result_columns.append("ema_fast")
+    if period_ema_slow is not None:
+        df['ema_slow'] = df['close'].rolling(period_ema_slow).mean()
+        result_columns.append("ema_slow")
     if drop_nan:
         df.dropna(inplace=True)  # удаляем все NULL значения
     return df[result_columns].reset_index(drop=True).copy()
@@ -444,9 +461,18 @@ def create_image(df: pd.DataFrame, show_scales: bool) -> Image:
                                   low=hist['low'],
                                   close=hist['close'],
                                   ))
-    fig2.add_trace(go.Scatter(x=hist.index, y=hist['vwma_vfast'], marker_color='purple', name='VWMA very fast'))
-    fig2.add_trace(go.Scatter(x=hist.index, y=hist['vwma_fast'], marker_color='blue', name='VWMA fast'))
-    fig2.add_trace(go.Scatter(x=hist.index, y=hist['vwma_slow'], marker_color='black', name='VWMA slow'))
+    if 'vwma_vfast' in hist.columns:
+        fig2.add_trace(go.Scatter(x=hist.index, y=hist['vwma_vfast'], marker_color='purple', name='VWMA very fast'))
+    if 'vwma_fast' in hist.columns:
+        fig2.add_trace(go.Scatter(x=hist.index, y=hist['vwma_fast'], marker_color='blue', name='VWMA fast'))
+    if 'vwma_slow' in hist.columns:
+        fig2.add_trace(go.Scatter(x=hist.index, y=hist['vwma_slow'], marker_color='black', name='VWMA slow'))
+    if 'ema_fast' in hist.columns:
+        fig2.add_trace(go.Scatter(x=hist.index, y=hist['ema_fast'], line=dict(color='blue', width=1,
+                                                                              dash='dash'), name='EMA'))
+    if 'ema_slow' in hist.columns:
+        fig2.add_trace(go.Scatter(x=hist.index, y=hist['ema_slow'], line=dict(color='black', width=1,
+                                                                              dash='dash'), name='EMA'))
     fig2.add_trace(go.Bar(x=hist.index, y=hist['volume']), secondary_y=True)
     fig2.update_yaxes(range=[0, max_volume * 10], secondary_y=True)
     fig2.update_yaxes(visible=False, secondary_y=True)

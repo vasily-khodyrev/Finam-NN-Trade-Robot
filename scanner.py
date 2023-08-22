@@ -356,13 +356,13 @@ async def get_stock_security_state(session: aiohttp.ClientSession, security: ISS
     data_d1_vwma = pd.DataFrame()
     data_w1_vwma = pd.DataFrame()
     if not data_h1.empty:
-        data_h1_vwma = functions.get_vwma(data_h1, 50, 100, 200, drop_nan=False)
+        data_h1_vwma = functions.get_vwma(data_h1, 50, 100, 200, 100, 200, drop_nan=False)
     if not data_h4.empty:
-        data_h4_vwma = functions.get_vwma(data_h4, 50, 100, 200, drop_nan=False)
+        data_h4_vwma = functions.get_vwma(data_h4, 50, 100, 200, 100, 200, drop_nan=False)
     if not data_d1.empty:
-        data_d1_vwma = functions.get_vwma(data_d1, 50, 100, 200, drop_nan=False)
+        data_d1_vwma = functions.get_vwma(data_d1, 50, 100, 200, 100, 200, drop_nan=False)
     if not data_w1.empty:
-        data_w1_vwma = functions.get_vwma(data_w1, 50, 100, 200, drop_nan=False)
+        data_w1_vwma = functions.get_vwma(data_w1, 50, 100, 200, 100, 200, drop_nan=False)
 
     return ScannerResult(security,
                          last_price,
@@ -420,7 +420,7 @@ def update_interest(states: list[AssetState], check_next_only: bool = False):
 async def get_futures_security_state(session: aiohttp.ClientSession, security: ISSSecurity) -> ScannerResult:
     # M1 - for last 5 days
     from_m1_date = (datetime.datetime.now() - datetime.timedelta(days=25)).strftime("%Y-%m-%d")
-    from_h1_date = (datetime.datetime.now() - datetime.timedelta(days=50)).strftime("%Y-%m-%d")
+    from_h1_date = (datetime.datetime.now() - datetime.timedelta(days=100)).strftime("%Y-%m-%d")
     data_m1 = await functions.get_futures_candles(session, security.get_ticker(), "M1", from_m1_date, None,
                                                   file_store=os.path.join("_scan", "csv", f"futures-{security.get_underlying()}_M1.csv"))
     data_h1 = await functions.get_futures_candles(session, security.get_ticker(), "H1", from_h1_date, None,
@@ -431,6 +431,7 @@ async def get_futures_security_state(session: aiohttp.ClientSession, security: I
     data_m10 = pd.DataFrame()
     data_m15 = pd.DataFrame()
     data_m30 = pd.DataFrame()
+    data_h3 = pd.DataFrame()
     last_price = None
     if not data_m1.empty:
         last_price = data_m1.tail(1)["close"].tolist()[0]
@@ -438,28 +439,32 @@ async def get_futures_security_state(session: aiohttp.ClientSession, security: I
         data_m10 = functions.aggregate(data_m1, 10)
         data_m15 = functions.aggregate(data_m1, 15)
         data_m30 = functions.aggregate(data_m1, 30)
-
+    if not data_h1.empty:
+        data_h3 = functions.aggregate(data_h1, 180)
     data_m1_vwma = pd.DataFrame()
     data_m5_vwma = pd.DataFrame()
     data_m10_vwma = pd.DataFrame()
     data_m15_vwma = pd.DataFrame()
     data_m30_vwma = pd.DataFrame()
     data_h1_vwma = pd.DataFrame()
+    data_h3_vwma = pd.DataFrame()
     if not data_m1.empty:
-        data_m1_vwma = functions.get_vwma(data_m1, 50, 100, 200, drop_nan=False)
-        data_m5_vwma = functions.get_vwma(data_m5, 50, 100, 200, drop_nan=False)
-        data_m10_vwma = functions.get_vwma(data_m10, 50, 100, 200, drop_nan=False)
-        data_m15_vwma = functions.get_vwma(data_m15, 50, 100, 200, drop_nan=False)
-        data_m30_vwma = functions.get_vwma(data_m30, 50, 100, 200, drop_nan=False)
+        data_m1_vwma = functions.get_vwma(data_m1, 50, 100, 200, 100, 200, drop_nan=False)
+        data_m5_vwma = functions.get_vwma(data_m5, 50, 100, 200, 100, 200, drop_nan=False)
+        data_m10_vwma = functions.get_vwma(data_m10, 50, 100, 200, 100, 200, drop_nan=False)
+        data_m15_vwma = functions.get_vwma(data_m15, 50, 100, 200, 100, 200, drop_nan=False)
+        data_m30_vwma = functions.get_vwma(data_m30, 50, 100, 200, 100, 200, drop_nan=False)
     if not data_h1.empty:
-        data_h1_vwma = functions.get_vwma(data_h1, 50, 100, 200, drop_nan=False)
+        data_h1_vwma = functions.get_vwma(data_h1, 50, 100, 200, 100, 200, drop_nan=False)
+        data_h3_vwma = functions.get_vwma(data_h3, 50, 100, 200, 100, 200, drop_nan=False)
     _state_m1 = get_state(security, "M1", data_m1_vwma)
     _state_m5 = get_state(security, "M5", data_m5_vwma)
     _state_m10 = get_state(security, "M10", data_m10_vwma)
     _state_m15 = get_state(security, "M15", data_m15_vwma)
     _state_m30 = get_state(security, "M30", data_m30_vwma)
     _state_h1 = get_state(security, "H1", data_h1_vwma)
-    _states = [_state_m1, _state_m5, _state_m10, _state_m15, _state_m30, _state_h1]
+    _state_h3 = get_state(security, "H3", data_h3_vwma)
+    _states = [_state_m1, _state_m5, _state_m10, _state_m15, _state_m30, _state_h1, _state_h3]
     update_interest(_states, check_next_only=True)
     _result = ScannerResult(security, last_price, _states)
     parent_dir = os.path.join("_scan", "csv", "futures")
