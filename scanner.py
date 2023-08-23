@@ -277,6 +277,14 @@ def get_change_trend(trend: Trend) -> Trend:
         return trend
 
 
+def isUpTrend(trend: Trend) -> bool:
+    return trend == Trend.UP or trend == Trend.CHG_UP
+
+
+def isDownTrend(trend: Trend) -> bool:
+    return trend == Trend.DOWN or trend == Trend.CHG_DOWN
+
+
 def getClosestLevel(dataset: pd.DataFrame):
     #TODO: Check - maybe we do not need to check prev candle in case monitoring will be constant
     #TODO: Check low/high separately and provide closest direction - UP/DOWN
@@ -343,12 +351,23 @@ def get_potential(dataset: pd.DataFrame, checkDownTrend: Optional[bool] = False)
     last_vwma_fast = last_row["vwma_fast"].tolist()[0]
     last_vwma_slow = last_row["vwma_slow"].tolist()[0]
 
-    if last_vwma_fast > last_vwma_slow >= last_close:
-        interest = True
+    vwma_fast_trend = None
+    if len(dataset) > 2:
+        vwma_past = dataset["vwma_fast"].iloc[-3]
+        vwma_last = dataset["vwma_fast"].iloc[-1]
+        if vwma_last - vwma_past > 0:
+            vwma_fast_trend = Trend.UP
+        else:
+            vwma_fast_trend = Trend.DOWN
+
+    if isUpTrend(cur_trend) and last_vwma_fast > last_close:
         potential = (last_vwma_fast - last_close) / last_close * 100
-    if checkDownTrend and last_vwma_fast < last_vwma_slow < last_close:
-        interest = True
+    if isDownTrend(cur_trend) and last_vwma_fast < last_close:
         potential = (last_close - last_vwma_fast) / last_close * 100
+    if last_vwma_fast > last_vwma_slow >= last_close and isUpTrend(vwma_fast_trend):
+        interest = True
+    if checkDownTrend and last_vwma_fast < last_vwma_slow < last_close and isDownTrend(vwma_fast_trend):
+        interest = True
 
     closestLevel = getClosestLevel(dataset)
     return cur_trend, interest, potential, closestLevel
@@ -449,6 +468,7 @@ def update_interest(states: list[AssetState], check_next_only: bool = False):
     #Remove interest on the highest state - it should be just a reference
     states[len(states) - 1].updateInterest(False)
 
+    # TODO: revise this logic
     # Remove interest on the lowest state - it should be just a reference
     if states[0].get_interest():
         _dropInterest = True
