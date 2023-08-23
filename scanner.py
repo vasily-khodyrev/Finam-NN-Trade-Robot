@@ -214,6 +214,9 @@ class ScannerResult:
     def get_states(self) -> list[AssetState]:
         return self._states
 
+    def get_max_potential(self) -> float:
+        return max(b.get_potential() for b in self.get_states())
+
     def get_last_price(self) -> str:
         return "-" if self._last_price is None else "{:.2f}".format(self._last_price)
 
@@ -381,7 +384,7 @@ def get_potential(dataset: pd.DataFrame, checkDownTrend: Optional[bool] = False)
 
     if isUpTrend(cur_trend) and last_vwma_fast > last_close:
         potential = (last_vwma_fast - last_close) / last_close * 100
-    if isDownTrend(cur_trend) and last_vwma_fast < last_close:
+    if checkDownTrend and isDownTrend(cur_trend) and last_vwma_fast < last_close:
         potential = (last_close - last_vwma_fast) / last_close * 100
     if last_vwma_fast > last_vwma_slow >= last_close and isUpTrend(vwma_fast_trend):
         interest = True
@@ -622,7 +625,7 @@ def print_scanner_results(description: str, results: List[ScannerResult], isFutu
         os.makedirs(parent_dir)
     filtered_results = [x for x in results if x.hasAllValidStates()]
     total_with_data_count = len(filtered_results)
-    interesting_results = [x for x in filtered_results if x.hasInterest()]
+    interesting_results = [x for x in filtered_results if x.hasInterest() or x.get_max_potential() > 5]
     interesting_results_count = len(interesting_results)
 
     # print out all futures if there's nothing interesting found
@@ -631,7 +634,7 @@ def print_scanner_results(description: str, results: List[ScannerResult], isFutu
     # Sorting max(potential) -> list level -> ticker
     reportable_results = sorted(reportable_results,
                                 key=lambda a: (
-                                    max(b.get_potential() for b in a.get_states()),
+                                    a.get_max_potential(),
                                     a.get_security().get_list_level(),
                                     a.get_security().get_ticker()
                                 ),
