@@ -71,7 +71,8 @@ class AssetState:
                  image: Image,
                  interest: bool,
                  potential: Optional[float] = None,
-                 potential_trend: Optional[Trend] = None):
+                 potential_trend: Optional[Trend] = None,
+                 closestLevel: Optional[str] = 'none'):
         self._security = security
         self._tf = tf
         self._status = status
@@ -81,6 +82,7 @@ class AssetState:
         self._potential = potential
         self._file_path = None
         self._potential_trend = potential_trend
+        self._closestLevel = closestLevel
 
     def get_security(self) -> ISSSecurity:
         return self._security
@@ -96,6 +98,9 @@ class AssetState:
 
     def get_potential_trend_value(self) -> Optional[Trend]:
         return self._potential_trend
+
+    def get_closestLevel(self):
+        return self._closestLevel
 
     def get_trend(self) -> str:
         return self._trend.name if self._trend is not None else "-"
@@ -272,7 +277,53 @@ def get_change_trend(trend: Trend) -> Trend:
         return trend
 
 
-def get_potential(dataset: pd.DataFrame):
+def getClosestLevel(dataset: pd.DataFrame):
+    #TODO: Check - maybe we do not need to check prev candle in case monitoring will be constant
+    #TODO: Check low/high separately and provide closest direction - UP/DOWN
+    _hasPrevClose = True
+    prev_close = 0.0
+    prev_high = 0.0
+    prev_low = 0.0
+    if len(dataset) < 2:
+        _hasPrevClose = False
+    else:
+        prev_close = dataset["close"].iloc[-2]
+        prev_high = dataset["high"].iloc[-2]
+        prev_low = dataset["low"].iloc[-2]
+    last_high = dataset["high"].iloc[-1]
+    last_low = dataset["low"].iloc[-1]
+    last_close = dataset["close"].iloc[-1]
+    columns = []
+    if 'vwma_vfast' in dataset.columns:
+        columns.append('vwma_vfast')
+    if 'vwma_fast' in dataset.columns:
+        columns.append('vwma_fast')
+    if 'vwma_slow' in dataset.columns:
+        columns.append('vwma_slow')
+    if 'ema_fast' in dataset.columns:
+        columns.append('ema_fast')
+    if 'ema_slow' in dataset.columns:
+        columns.append('ema_slow')
+    dist = [(x, abs(last_close - dataset[x].iloc[-1])/last_close) for x in columns]
+    lev_min = min(dist, key=lambda x: x[1])
+    current_level = lev_min[0] if lev_min[1] < 0.0005 else ''
+    #check current and previous levels
+    if current_level == '' and _hasPrevClose:
+        dist = [(x, abs(prev_close - dataset[x].iloc[-2]) / prev_close) for x in columns]
+        lev_min = min(dist, key=lambda x: x[1])
+        current_level = lev_min[0] if lev_min[1] < 0.0005 else ''
+    if current_level == '':
+        dist = [(x, (last_high - dataset[x].iloc[-1])*(last_low - dataset[x].iloc[-1])) for x in columns]
+        lev_min = min(dist, key=lambda x: x[1])
+        current_level = lev_min[0] if lev_min[1] <= 0.0 else ''
+    if current_level == '' and _hasPrevClose:
+        dist = [(x, (prev_high - dataset[x].iloc[-2])*(prev_low - dataset[x].iloc[-2])) for x in columns]
+        lev_min = min(dist, key=lambda x: x[1])
+        current_level = lev_min[0] if lev_min[1] <= 0.0 else ''
+    return current_level
+
+
+def get_potential(dataset: pd.DataFrame, checkDownTrend: Optional[bool] = False):
     count = 0
     cur_trend = None
     reversed_dataset = dataset.iloc[::-1]
@@ -285,6 +336,7 @@ def get_potential(dataset: pd.DataFrame):
         if trend != cur_trend:
             cur_trend = cur_trend if count > 20 else get_change_trend(cur_trend)
             break
+
     interest = False
     potential = 0.0
     last_row = dataset.tail(1)
@@ -296,8 +348,12 @@ def get_potential(dataset: pd.DataFrame):
     if last_vwma_fast > last_vwma_slow >= last_close:
         interest = True
         potential = (last_vwma_fast - last_close) / last_close * 100
+    if checkDownTrend and last_vwma_fast < last_vwma_slow < last_close:
+        interest = True
+        potential = (last_close - last_vwma_fast) / last_close * 100
 
-    return cur_trend, interest, potential
+    closestLevel = getClosestLevel(dataset)
+    return cur_trend, interest, potential, closestLevel
 
 
 def get_potential_trend_change(dataset: pd.DataFrame):
@@ -316,19 +372,22 @@ def get_potential_trend_change(dataset: pd.DataFrame):
     return Trend.CROSS
 
 
-def get_state(security: ISSSecurity, tf: str, data_vwma: pd.DataFrame) -> AssetState:
+def get_state(security: ISSSecurity, tf: str, data_vwma: pd.DataFrame, checkDownTrend: Optional[bool] = False) -> AssetState:
     dataset = data_vwma.tail(256)
-    has_data = not data_vwma.empty
+    has_data = not data_vwma.empty and len(data_vwma) > 1
     trend = None
     interest = False
     potential = 0.0
     potential_trend = None
     img = None
+    closestLevel = 'none'
     if has_data:
-        trend, interest, potential = get_potential(dataset)
+        trend, interest, potential, closestLevel = get_potential(dataset, checkDownTrend)
         potential_trend = get_potential_trend_change(dataset)
         img = functions.create_image(dataset, True)
-    return AssetState(security, tf, has_data, trend, img, interest, potential, potential_trend=potential_trend)
+    return AssetState(security, tf, has_data, trend, img, interest, potential,
+                      potential_trend=potential_trend,
+                      closestLevel=closestLevel)
 
 
 async def get_stock_security_state(session: aiohttp.ClientSession, security: ISSSecurity) -> ScannerResult:
@@ -393,7 +452,13 @@ def update_interest(states: list[AssetState], check_next_only: bool = False):
     states[len(states) - 1].updateInterest(False)
 
     # Remove interest on the lowest state - it should be just a reference
-    states[0].updateInterest(False)
+    if states[0].get_interest():
+        _dropInterest = True
+        for _idx in range(1, len(states)):
+            if states[_idx].get_closestLevel() != '':
+                _dropInterest = False
+        if _dropInterest:
+            states[0].updateInterest(False)
 
     for _idx in reversed(range(0, len(states) - 1)):
         _state = states[_idx]
@@ -457,13 +522,13 @@ async def get_futures_security_state(session: aiohttp.ClientSession, security: I
     if not data_h1.empty:
         data_h1_vwma = functions.get_vwma(data_h1, 50, 100, 200, 100, 200, drop_nan=False)
         data_h3_vwma = functions.get_vwma(data_h3, 50, 100, 200, 100, 200, drop_nan=False)
-    _state_m1 = get_state(security, "M1", data_m1_vwma)
-    _state_m5 = get_state(security, "M5", data_m5_vwma)
-    _state_m10 = get_state(security, "M10", data_m10_vwma)
-    _state_m15 = get_state(security, "M15", data_m15_vwma)
-    _state_m30 = get_state(security, "M30", data_m30_vwma)
-    _state_h1 = get_state(security, "H1", data_h1_vwma)
-    _state_h3 = get_state(security, "H3", data_h3_vwma)
+    _state_m1 = get_state(security, "M1", data_m1_vwma, checkDownTrend=True)
+    _state_m5 = get_state(security, "M5", data_m5_vwma, checkDownTrend=True)
+    _state_m10 = get_state(security, "M10", data_m10_vwma, checkDownTrend=True)
+    _state_m15 = get_state(security, "M15", data_m15_vwma, checkDownTrend=True)
+    _state_m30 = get_state(security, "M30", data_m30_vwma, checkDownTrend=True)
+    _state_h1 = get_state(security, "H1", data_h1_vwma, checkDownTrend=True)
+    _state_h3 = get_state(security, "H3", data_h3_vwma, checkDownTrend=True)
     _states = [_state_m1, _state_m5, _state_m10, _state_m15, _state_m30, _state_h1, _state_h3]
     update_interest(_states, check_next_only=True)
     _result = ScannerResult(security, last_price, _states)
@@ -494,10 +559,11 @@ def notifyResultsWithBot(interesting_results: list[ScannerResult], parent_dir: s
         for state in result.get_states():
             _tf = state.get_tf()
             _potential = state.get_potential_str()
-            _msg = f"{_security.get_ticker()}-{_security.get_name()} Price: {_last_price} Potential-{_tf}: {_potential}"
+            _closest_level = state.get_closestLevel()
+            _msg = f"{_security.get_ticker()}-{_security.get_name()} Price: {_last_price} Potential-{_tf}: {_potential} ClosestLevel: {_closest_level}"
             _img_path = state.get_image_path(parent_dir)
-            if state.get_interest() or state.get_potential() > 0.0:
-                _str = _str + f" {_tf}:{_potential}"
+            if state.get_interest() or state.get_potential() > 0.0 or _closest_level != '':
+                _str = _str + f" {_tf}:{_potential}:{_closest_level}"
             if _img_path:
                 _medias.append(
                     telebot.types.InputMediaPhoto(open(_img_path, 'rb'), caption=_msg)
@@ -549,6 +615,7 @@ def print_scanner_results(description: str, results: List[ScannerResult], isFutu
                         'style': x.get_style(),
                         'tf': x.get_tf(),
                         'potential': x.get_potential_str(),
+                        'closestLevel': x.get_closestLevel(),
                         'img': x.get_image_path(parent_dir)} for x in res.get_states()],
         })
 
