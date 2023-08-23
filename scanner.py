@@ -294,8 +294,6 @@ def getClosestLevel(dataset: pd.DataFrame):
     last_low = dataset["low"].iloc[-1]
     last_close = dataset["close"].iloc[-1]
     columns = []
-    if 'vwma_vfast' in dataset.columns:
-        columns.append('vwma_vfast')
     if 'vwma_fast' in dataset.columns:
         columns.append('vwma_fast')
     if 'vwma_slow' in dataset.columns:
