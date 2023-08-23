@@ -6,6 +6,7 @@ import sys
 import time
 from typing import Optional, Tuple, Callable
 
+import PIL
 import aiohttp
 import aiomoex
 import matplotlib.pyplot as plt
@@ -451,8 +452,10 @@ def get_vwma(df_in: pd.DataFrame,
     return df[result_columns].reset_index(drop=True).copy()
 
 
-def create_image(df: pd.DataFrame, show_scales: bool) -> Image:
+def create_image(df: pd.DataFrame, show_scales: bool) -> PIL.Image:
     hist = df.copy()
+    _data_len = len(hist)
+    _width = _height = _data_len * 3
     fig2 = make_subplots(specs=[[{"secondary_y": True}]])
     max_volume = hist['volume'].max()
     fig2.add_trace(go.Candlestick(x=hist.index,
@@ -479,15 +482,15 @@ def create_image(df: pd.DataFrame, show_scales: bool) -> Image:
     fig2.update_layout(margin=dict(l=0, r=0, b=0, t=0),
                        xaxis_rangeslider_visible=False,
                        autosize=False,
-                       width=512,
-                       height=512,
+                       width=_width,
+                       height=_height,
                        plot_bgcolor='white',
                        showlegend=False)
     if not show_scales:
         fig2.update_layout(yaxis={'visible': False, 'showticklabels': False},
                            xaxis={'visible': False, 'showticklabels': False})
     # fig2.show()
-    image_data = plotly.io.to_image(fig2, width=512, height=512, format="png")
+    image_data = plotly.io.to_image(fig2, width=_width, height=_height, format="png")
     return Image.open(io.BytesIO(image_data))
 
 

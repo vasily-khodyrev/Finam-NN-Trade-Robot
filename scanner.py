@@ -108,6 +108,18 @@ class AssetState:
     def get_image(self) -> Image:
         return self._image
 
+    def get_image_width(self) -> int:
+        if self._image is None:
+            return 0
+        h, w = self._image.size
+        return w
+
+    def get_image_height(self) -> int:
+        if self._image is None:
+            return 0
+        h, w = self._image.size
+        return h
+
     def get_image_path(self, parent_dir: str) -> str:
         if self._image is not None:
             if self._file_path is None:
@@ -141,7 +153,14 @@ class AssetState:
         return self._potential
 
     def get_style(self) -> str:
-        return "" if math.isclose(self._potential, 0.0) else "green"
+        if self._interest:
+            return "green"
+        if not math.isclose(self._potential, 0.0) and self._potential > 0.05:
+            if isUpTrend(self._trend):
+                return "blue"
+            if isDownTrend(self._trend):
+                return "red"
+        return ""
 
     def updateInterest(self, new_interest: bool):
         self._interest = new_interest
