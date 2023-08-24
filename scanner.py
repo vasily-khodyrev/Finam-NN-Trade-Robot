@@ -584,7 +584,8 @@ async def get_futures_security_state(session: aiohttp.ClientSession, security: I
     return _result
 
 
-def notifyResultsWithBot(interesting_results: list[ScannerResult], parent_dir: str):
+def notifyResultsWithBot(all_results: list[ScannerResult], parent_dir: str):
+    interesting_results = [x for x in all_results if x.hasAllValidStates() and x.hasInterest()]
     if len(interesting_results) == 0:
         return
 
@@ -693,7 +694,7 @@ def print_scanner_results(description: str, results: List[ScannerResult], isFutu
     print(f"Result is written to {out_file_path}")
 
     if isFutures:
-        notifyResultsWithBot(interesting_results, parent_dir)
+        notifyResultsWithBot(results, parent_dir)
 
 
 async def stock_screen():
