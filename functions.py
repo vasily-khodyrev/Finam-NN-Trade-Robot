@@ -455,7 +455,7 @@ def get_vwma(df_in: pd.DataFrame,
 def create_image(df: pd.DataFrame, show_scales: bool) -> PIL.Image:
     hist = df.copy()
     _data_len = len(hist)
-    _width = _height = max(_data_len * 3, 512)
+    _width = _height = max(_data_len * 5, 512)
     fig2 = make_subplots(specs=[[{"secondary_y": True}]])
     max_volume = hist['volume'].max()
     fig2.add_trace(go.Candlestick(x=hist.index,

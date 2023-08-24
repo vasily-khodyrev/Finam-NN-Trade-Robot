@@ -374,10 +374,17 @@ def get_potential(dataset: pd.DataFrame, checkDownTrend: Optional[bool] = False)
     last_vwma_slow = last_row["vwma_slow"].tolist()[0]
 
     vwma_fast_trend = None
+    vwma_slow_trend = None
     if len(dataset) > 2:
-        vwma_past = dataset["vwma_fast"].iloc[-3]
-        vwma_last = dataset["vwma_fast"].iloc[-1]
-        if vwma_last - vwma_past > 0:
+        vwma_fast_past = dataset["vwma_fast"].iloc[-3]
+        vwma_fast_last = dataset["vwma_fast"].iloc[-1]
+        vwma_slow_past = dataset["vwma_fast"].iloc[-3]
+        vwma_slow_last = dataset["vwma_fast"].iloc[-1]
+        if vwma_slow_last - vwma_slow_past > 0:
+            vwma_slow_trend = Trend.UP
+        else:
+            vwma_slow_trend = Trend.DOWN
+        if vwma_fast_last - vwma_fast_past > 0:
             vwma_fast_trend = Trend.UP
         else:
             vwma_fast_trend = Trend.DOWN
@@ -386,9 +393,9 @@ def get_potential(dataset: pd.DataFrame, checkDownTrend: Optional[bool] = False)
         potential = (last_vwma_fast - last_close) / last_close * 100
     if checkDownTrend and isDownTrend(cur_trend) and last_vwma_fast < last_close:
         potential = (last_close - last_vwma_fast) / last_close * 100
-    if last_vwma_fast > last_vwma_slow >= last_close and isUpTrend(vwma_fast_trend):
+    if last_vwma_fast > last_vwma_slow >= last_close and (isUpTrend(vwma_fast_trend) or isUpTrend(vwma_slow_trend)):
         interest = True
-    if checkDownTrend and last_vwma_fast < last_vwma_slow < last_close and isDownTrend(vwma_fast_trend):
+    if checkDownTrend and last_vwma_fast < last_vwma_slow < last_close and (isDownTrend(vwma_fast_trend) or isDownTrend(vwma_slow_trend)):
         interest = True
 
     closestLevel = getClosestLevel(dataset)
