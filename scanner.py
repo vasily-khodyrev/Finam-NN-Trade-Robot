@@ -429,6 +429,14 @@ def get_potential_trend_change(dataset: pd.DataFrame):
 def get_state(security: ISSSecurity, tf: str, data_vwma: pd.DataFrame, checkDownTrend: Optional[bool] = False) -> AssetState:
     dataset = data_vwma.tail(256)
     has_data = not data_vwma.empty and len(data_vwma) > 1
+    if has_data:
+        last_date = data_vwma["datetime"].iloc[-1]
+        too_old = datetime.datetime.now() - datetime.timedelta(days=7)
+        too_old_date = too_old.strftime('%Y-%m-%d')
+        has_data = last_date > too_old
+        last_valid_date = last_date.strftime('%Y-%m-%d')
+        if not has_data:
+            print(f"{security.get_ticker()}-{tf}: DATA IS TOO OLD - {last_valid_date} < {too_old_date}")
     trend = None
     interest = False
     potential = 0.0
