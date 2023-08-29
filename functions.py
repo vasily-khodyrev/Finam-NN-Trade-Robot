@@ -252,18 +252,15 @@ async def get_futures_candles(session,
     # Check if data is present - return empty dataframe with columns
     if not df.empty:
         df['datetime'] = pd.to_datetime(df['begin'], format='%Y-%m-%d %H:%M:%S')
-        # для M1, M10, H1 - приводим дату свечи в правильный вид
-        if tf in [1, 10, 60]:
-            df['datetime'] = df['datetime'].apply(lambda x: x + datetime.timedelta(minutes=tf))
         df = df[["datetime", "open", "high", "low", "close", "volume"]].copy()
     full_data = df
     if file_store is not None:
         concat_data = pd.concat([old_data, df])
         full_data = concat_data.drop_duplicates(subset=["datetime"], keep='last').reset_index(drop=True)
-    if tf == 1:
+    if tf in [1, 10, 60]:
         _last_date = full_data["datetime"].iloc[-1]
         _now = datetime.datetime.now()
-        _delta_min = int((_now - _last_date).total_seconds() // 60)
+        _delta_min = int((_now - _last_date).total_seconds() // (tf * 60))
         if _delta_min > 0:
             print(f"{ticker}-{timeframe} MOEX delta is {_delta_min} min")
             _latest_data = get_finam_futures_intraday_candles(ticker, timeframe, _delta_min + 5)
@@ -315,8 +312,6 @@ def get_finam_futures_intraday_candles(ticker: str, tf: str, candles_count: int 
                      }
             result = pd.DataFrame(_dict)
             _moex_tf = get_timeframe_moex(tf)
-            if _moex_tf in [1, 10, 60]:
-                result['datetime'] = result['datetime'].apply(lambda x: x + datetime.timedelta(minutes=_moex_tf))
         else:
             print(f"No candles received for {ticker}")
     finally:
@@ -358,9 +353,6 @@ async def get_stock_candles(session: aiohttp.ClientSession,
         df = pd.DataFrame(data=None, columns=["datetime", "open", "high", "low", "close", "volume"])
     else:
         df['datetime'] = pd.to_datetime(df['begin'], format='%Y-%m-%d %H:%M:%S')
-        # для M1, M10, H1 - приводим дату свечи в правильный вид
-        if tf in [1, 10, 60]:
-            df['datetime'] = df['datetime'].apply(lambda x: x + datetime.timedelta(minutes=tf))
         df = df[["datetime", "open", "high", "low", "close", "volume"]].copy()
     full_data = df
     if file_store is not None:
@@ -373,7 +365,7 @@ async def get_stock_candles(session: aiohttp.ClientSession,
 def aggregate(df: pd.DataFrame, period_min: int) -> pd.DataFrame:
     """Aggregate Функция получения стоковых свечей с MOEX."""
     result = df.copy()
-    result['index_datetime'] = result['datetime'].apply(lambda x: x - datetime.timedelta(minutes=1))
+    result['index_datetime'] = result['datetime'].apply(lambda x: x + datetime.timedelta(minutes=1))
     result['datetime'] = pd.to_datetime(result['index_datetime'])
     result["close"] = result["close"].astype(float)
     result["open"] = result["open"].astype(float)
@@ -387,7 +379,6 @@ def aggregate(df: pd.DataFrame, period_min: int) -> pd.DataFrame:
                                                         'low': 'min',
                                                         'close': 'last',
                                                         'volume': 'sum'})
-    result['datetime'] = result['datetime'].apply(lambda x: x + datetime.timedelta(minutes=period_min))
     result.dropna(inplace=True)  # удаляем все NULL значения
     result = result[["datetime", "open", "high", "low", "close", "volume"]].copy()
     return result
@@ -452,8 +443,11 @@ def get_vwma(df_in: pd.DataFrame,
     return df[result_columns].reset_index(drop=True).copy()
 
 
-def create_image(df: pd.DataFrame, show_scales: bool) -> PIL.Image:
+def create_image(df: pd.DataFrame, show_scales: bool, title: Optional[str] = None) -> PIL.Image:
     hist = df.copy()
+    _last_date = hist["datetime"].iloc[-1]
+    _last_date_str = _last_date.strftime('%Y-%m-%d %H:%M')
+    hist.index = pd.to_datetime(hist['datetime'])
     _data_len = len(hist)
     _width = _height = max(_data_len * 5, 512)
     fig2 = make_subplots(specs=[[{"secondary_y": True}]])
@@ -479,16 +473,25 @@ def create_image(df: pd.DataFrame, show_scales: bool) -> PIL.Image:
     fig2.add_trace(go.Bar(x=hist.index, y=hist['volume']), secondary_y=True)
     fig2.update_yaxes(range=[0, max_volume * 10], secondary_y=True)
     fig2.update_yaxes(visible=False, secondary_y=True)
-    fig2.update_layout(margin=dict(l=0, r=0, b=0, t=0),
-                       xaxis_rangeslider_visible=False,
+    fig2.update_yaxes(gridcolor="black", showgrid=True, side="right")
+    fig2.update_xaxes(type="category", categoryorder='category ascending')
+    fig2.update_layout(xaxis_rangeslider_visible=False,
                        autosize=False,
                        width=_width,
                        height=_height,
                        plot_bgcolor='white',
                        showlegend=False)
     if not show_scales:
+        fig2.update_layout(margin=dict(l=0, r=0, b=0, t=0))
         fig2.update_layout(yaxis={'visible': False, 'showticklabels': False},
                            xaxis={'visible': False, 'showticklabels': False})
+    else:
+        fig2.update_layout(margin=dict(l=0, r=0, b=0, t=50))
+        if title is not None:
+            fig2.update_layout(title_text=f"{title}")
+        else:
+            fig2.update_layout(title_text=f"{_last_date_str}")
+
     # fig2.show()
     image_data = plotly.io.to_image(fig2, width=_width, height=_height, format="png")
     return Image.open(io.BytesIO(image_data))

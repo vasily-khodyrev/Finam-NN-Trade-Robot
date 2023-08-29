@@ -211,6 +211,14 @@ class ScannerResult:
                 break
         return _res
 
+    def getInterestingPotential(self):
+        _sts = self.get_states()
+        _potentials = [_s.get_potential() for _s in _sts if _s.get_interest()]
+        if len(_potentials) > 0:
+            return max(_potentials)
+        else:
+            return 0.0
+
     def get_states(self) -> list[AssetState]:
         return self._states
 
@@ -430,7 +438,9 @@ def get_state(security: ISSSecurity, tf: str, data_vwma: pd.DataFrame, checkDown
     if has_data:
         trend, interest, potential, closestLevel = get_potential(dataset, checkDownTrend)
         potential_trend = get_potential_trend_change(dataset)
-        img = functions.create_image(dataset, True)
+        _last_date = dataset["datetime"].iloc[-1]
+        _last_date_str = _last_date.strftime('%Y-%m-%d %H:%M')
+        img = functions.create_image(dataset, True, f"{security.get_ticker()}-{tf}-{_last_date_str}")
     return AssetState(security, tf, has_data, trend, img, interest, potential,
                       potential_trend=potential_trend,
                       closestLevel=closestLevel)
@@ -537,8 +547,14 @@ async def get_futures_security_state(session: aiohttp.ClientSession, security: I
                                                   file_store=os.path.join("_scan", "csv", f"futures-{security.get_underlying()}_M1.csv"))
     data_h1 = await functions.get_futures_candles(session, security.get_ticker(), "H1", from_h1_date, None,
                                                   file_store=os.path.join("_scan", "csv", f"futures-{security.get_underlying()}_H1.csv"))
-
-    print(f"Received data for {security.get_ticker()}")
+    _delta_min = 0
+    if not data_m1.empty:
+        _last_date = data_m1["datetime"].iloc[-1]
+        _date_str = _last_date.strftime('%Y-%m-%d %H:%M:%S')
+        _last_open = data_m1["open"].iloc[-1]
+        _now = datetime.datetime.now()
+        _delta_min = int((_now - _last_date).total_seconds() // 60)
+    print(f"Received data for {security.get_ticker()} - delta {_delta_min} min {_date_str}-{_last_open}")
     data_m5 = pd.DataFrame()
     data_m10 = pd.DataFrame()
     data_m15 = pd.DataFrame()
@@ -585,7 +601,8 @@ async def get_futures_security_state(session: aiohttp.ClientSession, security: I
 
 
 def notifyResultsWithBot(all_results: list[ScannerResult], parent_dir: str):
-    interesting_results = [x for x in all_results if x.hasAllValidStates() and x.hasInterest()]
+    interesting_results = [x for x in all_results if
+                           x.hasAllValidStates() and x.hasInterest() and x.getInterestingPotential() > 0.1]
     if len(interesting_results) == 0:
         return
 
