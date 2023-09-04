@@ -15,6 +15,7 @@ import aiomoex
 import chevron
 import pandas as pd
 from PIL import Image
+from aiohttp import ClientTimeout
 
 import functions
 
@@ -431,7 +432,7 @@ def get_state(security: ISSSecurity, tf: str, data_vwma: pd.DataFrame, checkDown
     has_data = not data_vwma.empty and len(data_vwma) > 1
     if has_data:
         last_date = data_vwma["datetime"].iloc[-1]
-        too_old = datetime.datetime.now() - datetime.timedelta(days=7)
+        too_old = datetime.datetime.now() - datetime.timedelta(days=10)
         too_old_date = too_old.strftime('%Y-%m-%d')
         has_data = last_date > too_old
         last_valid_date = last_date.strftime('%Y-%m-%d')
@@ -724,15 +725,24 @@ def print_scanner_results(description: str, results: List[ScannerResult], isFutu
 
 async def stock_screen():
     connector = aiohttp.TCPConnector(force_close=False, use_dns_cache=False, limit=1, limit_per_host=1)
-    async with aiohttp.ClientSession(connector=connector) as session:
+    async with aiohttp.ClientSession(connector=connector, timeout=ClientTimeout(total=6*60)) as session:
         start = time.time()
         securities = await get_moex_securities(session)
         print(f"Found {len(securities)} tickers on MOEX")
-        tasks = []
+        security_per_class = {}
         for security in securities:
-            tasks.append(asyncio.create_task(get_stock_security_state(session, security)))
-        results = await asyncio.gather(*tasks)
-        print_scanner_results("Stocks", results)
+            if security.get_list_level() not in security_per_class:
+                security_per_class[security.get_list_level()] = []
+            security_per_class[security.get_list_level()].append(security)
+        all_results = []
+        for _class in security_per_class:
+            print(f"Obtain stock data for list_level={_class}...")
+            for _sec in security_per_class[_class]:
+                tasks = [asyncio.create_task(get_stock_security_state(session, _sec))]
+                results = await asyncio.gather(*tasks)
+                all_results.append(results[0])
+            print(f"All data for list_level={_class} received.")
+        print_scanner_results("Stocks", all_results)
         end = time.time()
         total_time = end - start
         print(f"Execution completed in {str(total_time)} sec")
