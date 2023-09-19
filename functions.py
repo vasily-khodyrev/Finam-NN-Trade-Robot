@@ -276,6 +276,7 @@ def get_finam_futures_intraday_candles(ticker: str, tf: str, candles_count: int 
     FINAM_TOKEN = os.environ.get('FINAM_VIEW_TOKEN')
     fp_provider = FinamPy(FINAM_TOKEN)
     result = pd.DataFrame(data=None, columns=["datetime", "open", "high", "low", "close", "volume"])
+    _candle_count = candles_count
     try:
         time_frame = get_timeframe_finam(tf)
         next_utc_bar_date = fp_provider.msk_to_utc_datetime(datetime.datetime.now() + datetime.timedelta(minutes=2), True)
@@ -286,6 +287,7 @@ def get_finam_futures_intraday_candles(ticker: str, tf: str, candles_count: int 
             new_bars_dict = MessageToDict(
                 _result,
                 including_default_value_fields=True)['candles']
+            _candle_count = len(new_bars_dict)
             _dates = []
             _opens = []
             _highs = []
@@ -318,7 +320,7 @@ def get_finam_futures_intraday_candles(ticker: str, tf: str, candles_count: int 
         fp_provider.close_channel()
     end_0 = time.time()
     total_time = end_0 - start
-    print(f"get_finam_futures_intraday_candles {ticker} - {tf} - {candles_count} candles -  completed in {total_time:.2f} sec")
+    print(f"get_finam_futures_intraday_candles {ticker} - {tf} - {_candle_count} candles -  completed in {total_time:.2f} sec")
     return result
 
 
@@ -403,6 +405,7 @@ def __get_period_lambda(x, period):
 
 
 def get_vwma(df_in: pd.DataFrame,
+             period_vwma_vvfast: Optional[int] = None,
              period_vwma_vfast: Optional[int] = None,
              period_vwma_fast: Optional[int] = None,
              period_vwma_slow: Optional[int] = None,
@@ -420,6 +423,12 @@ def get_vwma(df_in: pd.DataFrame,
         df['volume_sum_vfast'] = df['volume'].rolling(period_vwma_vfast).sum()
         df['vwma_vfast'] = df['cv_sum_vfast'] / df['volume_sum_vfast']  # формируем VWMA very fast
         result_columns.append("vwma_vfast")
+        if period_vwma_vvfast is not None:
+            df['cv_sum_vvfast'] = df['cv'].rolling(period_vwma_vvfast).sum()
+            df['volume_sum_vvfast'] = df['volume'].rolling(period_vwma_vvfast).sum()
+            df['vwma_vvfast'] = df['cv_sum_vvfast'] / df['volume_sum_vvfast']  # формируем VWMA very fast
+            df['vwma_vfast_color'] = df.apply((lambda x: 'green' if x['close'] > x['vwma_vvfast'] and x['vwma_vvfast'] > x['vwma_vfast'] else 'green' if x['close'] < x['vwma_vvfast'] and x['vwma_vvfast'] < x['vwma_vfast'] else 'grey'), axis=1)
+            result_columns.append("vwma_vfast_color")
 
     if period_vwma_fast is not None:
         df['cv_sum_fast'] = df['cv'].rolling(period_vwma_fast).sum()
@@ -450,50 +459,58 @@ def create_image(df: pd.DataFrame, show_scales: bool, title: Optional[str] = Non
     hist.index = pd.to_datetime(hist['datetime'])
     _data_len = len(hist)
     _width = _height = max(_data_len * 5, 512)
-    fig2 = make_subplots(specs=[[{"secondary_y": True}]])
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
     max_volume = hist['volume'].max()
-    fig2.add_trace(go.Candlestick(x=hist.index,
+    fig.add_trace(go.Candlestick(x=hist.index,
                                   open=hist['open'],
                                   high=hist['high'],
                                   low=hist['low'],
                                   close=hist['close'],
                                   ))
     if 'vwma_vfast' in hist.columns:
-        fig2.add_trace(go.Scatter(x=hist.index, y=hist['vwma_vfast'], marker_color='purple', name='VWMA very fast'))
+        if 'vwma_vfast_color' in hist.columns:
+            fig.add_trace(go.Scatter(x=hist.index,
+                                     y=hist['vwma_vfast'],
+                                     mode='markers+lines',
+                                     marker={'color': hist['vwma_vfast_color']},
+                                     line={'color': 'purple'},
+                                     name='VWMA very fast'))
+        else:
+            fig.add_trace(go.Scatter(x=hist.index, y=hist['vwma_vfast'], marker_color='purple', name='VWMA very fast'))
     if 'vwma_fast' in hist.columns:
-        fig2.add_trace(go.Scatter(x=hist.index, y=hist['vwma_fast'], marker_color='blue', name='VWMA fast'))
+        fig.add_trace(go.Scatter(x=hist.index, y=hist['vwma_fast'], marker_color='blue', name='VWMA fast'))
     if 'vwma_slow' in hist.columns:
-        fig2.add_trace(go.Scatter(x=hist.index, y=hist['vwma_slow'], marker_color='black', name='VWMA slow'))
+        fig.add_trace(go.Scatter(x=hist.index, y=hist['vwma_slow'], marker_color='black', name='VWMA slow'))
     if 'ema_fast' in hist.columns:
-        fig2.add_trace(go.Scatter(x=hist.index, y=hist['ema_fast'], line=dict(color='blue', width=1,
+        fig.add_trace(go.Scatter(x=hist.index, y=hist['ema_fast'], line=dict(color='blue', width=1,
                                                                               dash='dash'), name='EMA'))
     if 'ema_slow' in hist.columns:
-        fig2.add_trace(go.Scatter(x=hist.index, y=hist['ema_slow'], line=dict(color='black', width=1,
+        fig.add_trace(go.Scatter(x=hist.index, y=hist['ema_slow'], line=dict(color='black', width=1,
                                                                               dash='dash'), name='EMA'))
-    fig2.add_trace(go.Bar(x=hist.index, y=hist['volume']), secondary_y=True)
-    fig2.update_yaxes(range=[0, max_volume * 10], secondary_y=True)
-    fig2.update_yaxes(visible=False, secondary_y=True)
-    fig2.update_yaxes(gridcolor="black", showgrid=True, side="right")
-    fig2.update_xaxes(type="category", categoryorder='category ascending')
-    fig2.update_layout(xaxis_rangeslider_visible=False,
+    fig.add_trace(go.Bar(x=hist.index, y=hist['volume']), secondary_y=True)
+    fig.update_yaxes(range=[0, max_volume * 10], secondary_y=True)
+    fig.update_yaxes(visible=False, secondary_y=True)
+    fig.update_yaxes(gridcolor="black", showgrid=True, side="right")
+    fig.update_xaxes(type="category", categoryorder='category ascending')
+    fig.update_layout(xaxis_rangeslider_visible=False,
                        autosize=False,
                        width=_width,
                        height=_height,
                        plot_bgcolor='white',
                        showlegend=False)
     if not show_scales:
-        fig2.update_layout(margin=dict(l=0, r=0, b=0, t=0))
-        fig2.update_layout(yaxis={'visible': False, 'showticklabels': False},
+        fig.update_layout(margin=dict(l=0, r=0, b=0, t=0))
+        fig.update_layout(yaxis={'visible': False, 'showticklabels': False},
                            xaxis={'visible': False, 'showticklabels': False})
     else:
-        fig2.update_layout(margin=dict(l=0, r=0, b=0, t=50))
+        fig.update_layout(margin=dict(l=0, r=0, b=0, t=50))
         if title is not None:
-            fig2.update_layout(title_text=f"{title}")
+            fig.update_layout(title_text=f"{title}")
         else:
-            fig2.update_layout(title_text=f"{_last_date_str}")
+            fig.update_layout(title_text=f"{_last_date_str}")
 
     # fig2.show()
-    image_data = plotly.io.to_image(fig2, width=_width, height=_height, format="png")
+    image_data = plotly.io.to_image(fig, width=_width, height=_height, format="png")
     return Image.open(io.BytesIO(image_data))
 
 

@@ -24,11 +24,13 @@ class ISSSecurity:
     def __init__(self,
                  ticker: str,
                  name: str,
+                 boardId: str,
                  list_level: Optional[int] = 0,
                  underlying: Optional[str] = None,
                  last_date: Optional[datetime.datetime] = None):
         self._ticker = ticker
         self._name = name
+        self._boardId = boardId
         self._list_level = list_level
         self._underlying = underlying
         self._last_date = last_date
@@ -38,6 +40,9 @@ class ISSSecurity:
 
     def get_name(self) -> str:
         return self._name
+
+    def get_boardId(self) -> str:
+        return self._boardId
 
     def get_list_level(self) -> int:
         return self._list_level
@@ -246,11 +251,12 @@ async def get_moex_securities(session: aiohttp.ClientSession) -> List[ISSSecurit
     query["sectypes"] = "1"
     data = await aiomoex.request_helpers.get_short_data(session, url, "securities", query)
     for line in data:
-        if line['BOARDID'] == "TQBR":
+        boardId = line['BOARDID']
+        if boardId == "TQBR" or boardId == "TQPI":
             ticker = line['SECID']
             name = line['SECNAME']
             list_level = line['LISTLEVEL']
-            result.append(ISSSecurity(ticker, name, list_level=list_level))
+            result.append(ISSSecurity(ticker, name, boardId, list_level=list_level))
             print(f"{ticker}: {name} - {list_level}")
     return result
 
@@ -275,7 +281,7 @@ async def get_moex_futures_securities(session: aiohttp.ClientSession,
             underlying = line["ASSETCODE"]
             if last_date > now_date and underlying in _filter:
                 underlying_futures = map_asset_futures.get(underlying, [])
-                underlying_futures.append(ISSSecurity(ticker, name, underlying=underlying, last_date=last_date))
+                underlying_futures.append(ISSSecurity(ticker, name, "FUT", underlying=underlying, last_date=last_date))
                 map_asset_futures[underlying] = underlying_futures
 
     for und, futs in map_asset_futures.items():
@@ -317,8 +323,8 @@ def isDownTrend(trend: Trend) -> bool:
 
 
 def getClosestLevel(dataset: pd.DataFrame):
-    #TODO: Check - maybe we do not need to check prev candle in case monitoring will be constant
-    #TODO: Check low/high separately and provide closest direction - UP/DOWN
+    # TODO: Check - maybe we do not need to check prev candle in case monitoring will be constant
+    # TODO: Check low/high separately and provide closest direction - UP/DOWN
     _hasPrevClose = True
     prev_close = 0.0
     prev_high = 0.0
@@ -341,20 +347,20 @@ def getClosestLevel(dataset: pd.DataFrame):
         columns.append('ema_fast')
     if 'ema_slow' in dataset.columns:
         columns.append('ema_slow')
-    dist = [(x, abs(last_close - dataset[x].iloc[-1])/last_close) for x in columns]
+    dist = [(x, abs(last_close - dataset[x].iloc[-1]) / last_close) for x in columns]
     lev_min = min(dist, key=lambda x: x[1])
     current_level = lev_min[0] if lev_min[1] < 0.0005 else ''
-    #check current and previous levels
+    # check current and previous levels
     if current_level == '' and _hasPrevClose:
         dist = [(x, abs(prev_close - dataset[x].iloc[-2]) / prev_close) for x in columns]
         lev_min = min(dist, key=lambda x: x[1])
         current_level = lev_min[0] if lev_min[1] < 0.0005 else ''
     if current_level == '':
-        dist = [(x, (last_high - dataset[x].iloc[-1])*(last_low - dataset[x].iloc[-1])) for x in columns]
+        dist = [(x, (last_high - dataset[x].iloc[-1]) * (last_low - dataset[x].iloc[-1])) for x in columns]
         lev_min = min(dist, key=lambda x: x[1])
         current_level = lev_min[0] if lev_min[1] <= 0.0 else ''
     if current_level == '' and _hasPrevClose:
-        dist = [(x, (prev_high - dataset[x].iloc[-2])*(prev_low - dataset[x].iloc[-2])) for x in columns]
+        dist = [(x, (prev_high - dataset[x].iloc[-2]) * (prev_low - dataset[x].iloc[-2])) for x in columns]
         lev_min = min(dist, key=lambda x: x[1])
         current_level = lev_min[0] if lev_min[1] <= 0.0 else ''
     return current_level
@@ -364,7 +370,8 @@ def get_potential(dataset: pd.DataFrame, checkDownTrend: Optional[bool] = False)
     count = 0
     cur_trend = None
     reversed_dataset = dataset.iloc[::-1]
-    for date, close, fast, slow in zip(reversed_dataset["datetime"], reversed_dataset["close"], reversed_dataset["vwma_fast"],
+    for date, close, fast, slow in zip(reversed_dataset["datetime"], reversed_dataset["close"],
+                                       reversed_dataset["vwma_fast"],
                                        reversed_dataset["vwma_slow"]):
         trend = get_trend(fast, slow)
         if not cur_trend:
@@ -404,7 +411,8 @@ def get_potential(dataset: pd.DataFrame, checkDownTrend: Optional[bool] = False)
         potential = (last_close - last_vwma_fast) / last_close * 100
     if last_vwma_fast > last_vwma_slow >= last_close and (isUpTrend(vwma_fast_trend) or isUpTrend(vwma_slow_trend)):
         interest = True
-    if checkDownTrend and last_vwma_fast < last_vwma_slow < last_close and (isDownTrend(vwma_fast_trend) or isDownTrend(vwma_slow_trend)):
+    if checkDownTrend and last_vwma_fast < last_vwma_slow < last_close and (
+            isDownTrend(vwma_fast_trend) or isDownTrend(vwma_slow_trend)):
         interest = True
 
     closestLevel = getClosestLevel(dataset)
@@ -427,7 +435,8 @@ def get_potential_trend_change(dataset: pd.DataFrame):
     return Trend.CROSS
 
 
-def get_state(security: ISSSecurity, tf: str, data_vwma: pd.DataFrame, checkDownTrend: Optional[bool] = False) -> AssetState:
+def get_state(security: ISSSecurity, tf: str, data_vwma: pd.DataFrame,
+              checkDownTrend: Optional[bool] = False) -> AssetState:
     dataset = data_vwma.tail(256)
     has_data = not data_vwma.empty and len(data_vwma) > 1
     if has_data:
@@ -459,17 +468,20 @@ async def get_stock_security_state(session: aiohttp.ClientSession, security: ISS
     # 2 month for 1H ( 6 to be converted to 4H)
     from_h1_date = (datetime.datetime.now() - datetime.timedelta(days=150)).strftime("%Y-%m-%d")
     # 1 year for 1D
-    from_d1_date = (datetime.datetime.now() - datetime.timedelta(days=365*2)).strftime("%Y-%m-%d")
+    from_d1_date = (datetime.datetime.now() - datetime.timedelta(days=365 * 2)).strftime("%Y-%m-%d")
     # 8 years for 1W
-    from_w1_date = (datetime.datetime.now() - datetime.timedelta(days=365*8)).strftime("%Y-%m-%d")
+    from_w1_date = (datetime.datetime.now() - datetime.timedelta(days=365 * 8)).strftime("%Y-%m-%d")
     data_h1 = await functions.get_stock_candles(session, security.get_ticker(), "H1", from_h1_date, None,
-                                                file_store=os.path.join("_scan", "csv", f"stock-{security.get_ticker()}_H1.csv"))
+                                                file_store=os.path.join("_scan", "csv",
+                                                                        f"stock-{security.get_ticker()}_H1.csv"))
     data_d1 = await functions.get_stock_candles(session, security.get_ticker(), "D1", from_d1_date, None,
                                                 file_store=os.path.join("_scan", "csv",
                                                                         f"stock-{security.get_ticker()}_D1.csv"))
     data_w1 = await functions.get_stock_candles(session, security.get_ticker(), "W1", from_w1_date, None,
-                                                file_store=os.path.join("_scan", "csv", f"stock-{security.get_ticker()}_W1.csv"))
-    print(f"Received data for {security.get_ticker()} H1-{'OK' if not data_h1.empty else 'NOK'} D1-{'OK' if not data_d1.empty else 'NOK'} W1-{'OK' if not data_w1.empty else 'NOK'}")
+                                                file_store=os.path.join("_scan", "csv",
+                                                                        f"stock-{security.get_ticker()}_W1.csv"))
+    print(
+        f"Received data for {security.get_ticker()} H1-{'OK' if not data_h1.empty else 'NOK'} D1-{'OK' if not data_d1.empty else 'NOK'} W1-{'OK' if not data_w1.empty else 'NOK'}")
     data_h4 = pd.DataFrame()
     last_price = None
     if not data_h1.empty:
@@ -480,13 +492,13 @@ async def get_stock_security_state(session: aiohttp.ClientSession, security: ISS
     data_d1_vwma = pd.DataFrame()
     data_w1_vwma = pd.DataFrame()
     if not data_h1.empty:
-        data_h1_vwma = functions.get_vwma(data_h1, 50, 100, 200, 100, 200, drop_nan=False)
+        data_h1_vwma = functions.get_vwma(data_h1, 10, 50, 100, 200, 100, 200, drop_nan=False)
     if not data_h4.empty:
-        data_h4_vwma = functions.get_vwma(data_h4, 50, 100, 200, 100, 200, drop_nan=False)
+        data_h4_vwma = functions.get_vwma(data_h4, 10, 50, 100, 200, 100, 200, drop_nan=False)
     if not data_d1.empty:
-        data_d1_vwma = functions.get_vwma(data_d1, 50, 100, 200, 100, 200, drop_nan=False)
+        data_d1_vwma = functions.get_vwma(data_d1, 10, 50, 100, 200, 100, 200, drop_nan=False)
     if not data_w1.empty:
-        data_w1_vwma = functions.get_vwma(data_w1, 50, 100, 200, 100, 200, drop_nan=False)
+        data_w1_vwma = functions.get_vwma(data_w1, 10, 50, 100, 200, 100, 200, drop_nan=False)
 
     return ScannerResult(security,
                          last_price,
@@ -513,7 +525,7 @@ def isSameTrend(asset1: AssetState, asset2: AssetState, check_potential1: bool =
 def update_interest(states: list[AssetState], check_next_only: bool = False):
     if len(states) < 2:
         return
-    #Remove interest on the highest state - it should be just a reference
+    # Remove interest on the highest state - it should be just a reference
     states[len(states) - 1].updateInterest(False)
 
     # TODO: revise this logic
@@ -530,7 +542,7 @@ def update_interest(states: list[AssetState], check_next_only: bool = False):
         _state = states[_idx]
         if _state.get_interest():
             if check_next_only:
-                _next_state = states[_idx+1]
+                _next_state = states[_idx + 1]
                 _first_state = states[0]
                 if not (isSameTrend(_state, _next_state) and isSameTrend(_state, _first_state, check_potential2=True)):
                     _state.updateInterest(False)
@@ -553,9 +565,11 @@ async def get_futures_security_state(session: aiohttp.ClientSession, security: I
     from_m1_date = (datetime.datetime.now() - datetime.timedelta(days=25)).strftime("%Y-%m-%d")
     from_h1_date = (datetime.datetime.now() - datetime.timedelta(days=100)).strftime("%Y-%m-%d")
     data_m1 = await functions.get_futures_candles(session, security.get_ticker(), "M1", from_m1_date, None,
-                                                  file_store=os.path.join("_scan", "csv", f"futures-{security.get_underlying()}_M1.csv"))
+                                                  file_store=os.path.join("_scan", "csv",
+                                                                          f"futures-{security.get_underlying()}_M1.csv"))
     data_h1 = await functions.get_futures_candles(session, security.get_ticker(), "H1", from_h1_date, None,
-                                                  file_store=os.path.join("_scan", "csv", f"futures-{security.get_underlying()}_H1.csv"))
+                                                  file_store=os.path.join("_scan", "csv",
+                                                                          f"futures-{security.get_underlying()}_H1.csv"))
     _delta_min = 0
     if not data_m1.empty:
         _last_date = data_m1["datetime"].iloc[-1]
@@ -586,14 +600,14 @@ async def get_futures_security_state(session: aiohttp.ClientSession, security: I
     data_h1_vwma = pd.DataFrame()
     data_h3_vwma = pd.DataFrame()
     if not data_m1.empty:
-        data_m1_vwma = functions.get_vwma(data_m1, 50, 100, 200, 100, 200, drop_nan=False)
-        data_m5_vwma = functions.get_vwma(data_m5, 50, 100, 200, 100, 200, drop_nan=False)
-        data_m10_vwma = functions.get_vwma(data_m10, 50, 100, 200, 100, 200, drop_nan=False)
-        data_m15_vwma = functions.get_vwma(data_m15, 50, 100, 200, 100, 200, drop_nan=False)
-        data_m30_vwma = functions.get_vwma(data_m30, 50, 100, 200, 100, 200, drop_nan=False)
+        data_m1_vwma = functions.get_vwma(data_m1, 10, 50, 100, 200, 100, 200, drop_nan=False)
+        data_m5_vwma = functions.get_vwma(data_m5, 10, 50, 100, 200, 100, 200, drop_nan=False)
+        data_m10_vwma = functions.get_vwma(data_m10, 10, 50, 100, 200, 100, 200, drop_nan=False)
+        data_m15_vwma = functions.get_vwma(data_m15, 10, 50, 100, 200, 100, 200, drop_nan=False)
+        data_m30_vwma = functions.get_vwma(data_m30, 10, 50, 100, 200, 100, 200, drop_nan=False)
     if not data_h1.empty:
-        data_h1_vwma = functions.get_vwma(data_h1, 50, 100, 200, 100, 200, drop_nan=False)
-        data_h3_vwma = functions.get_vwma(data_h3, 50, 100, 200, 100, 200, drop_nan=False)
+        data_h1_vwma = functions.get_vwma(data_h1, 10, 50, 100, 200, 100, 200, drop_nan=False)
+        data_h3_vwma = functions.get_vwma(data_h3, 10, 50, 100, 200, 100, 200, drop_nan=False)
     _state_m1 = get_state(security, "M1", data_m1_vwma, checkDownTrend=True)
     _state_m5 = get_state(security, "M5", data_m5_vwma, checkDownTrend=True)
     _state_m10 = get_state(security, "M10", data_m10_vwma, checkDownTrend=True)
@@ -642,12 +656,12 @@ def notifyResultsWithBot(all_results: list[ScannerResult], parent_dir: str):
                 _medias.append(
                     telebot.types.InputMediaPhoto(open(_img_path, 'rb'), caption=_msg)
                 )
-        #send text overview
+        # send text overview
         bot.send_message(OWNER_TELE_ID, _str)
         if len(_medias) > 0:
             # send charts overview
             bot.send_media_group(OWNER_TELE_ID, _medias)
-    #stop bot
+    # stop bot
     bot.stop_bot()
 
 
@@ -725,7 +739,7 @@ def print_scanner_results(description: str, results: List[ScannerResult], isFutu
 
 async def stock_screen():
     connector = aiohttp.TCPConnector(force_close=False, use_dns_cache=False, limit=1, limit_per_host=1)
-    async with aiohttp.ClientSession(connector=connector, timeout=ClientTimeout(total=6*60)) as session:
+    async with aiohttp.ClientSession(connector=connector, timeout=ClientTimeout(total=6 * 60)) as session:
         start = time.time()
         securities = await get_moex_securities(session)
         print(f"Found {len(securities)} tickers on MOEX")
@@ -752,7 +766,7 @@ async def futures_screen():
     connector = aiohttp.TCPConnector(force_close=True, limit=5, limit_per_host=5)
     async with aiohttp.ClientSession(connector=connector) as session:
         start = time.time()
-        #securities = await get_moex_futures_securities(session, ["Si", "BR", "GOLD", "NG", "MIX", "RTS", "SILV"])
+        # securities = await get_moex_futures_securities(session, ["Si", "BR", "GOLD", "NG", "MIX", "RTS", "SILV"])
         securities = await get_moex_futures_securities(session, ["Si", "BR", "GOLD", "NG"])
         print(f"Found {len(securities)} tickers on MOEX")
         tasks = []
