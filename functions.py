@@ -427,7 +427,7 @@ def get_vwma(df_in: pd.DataFrame,
             df['cv_sum_vvfast'] = df['cv'].rolling(period_vwma_vvfast).sum()
             df['volume_sum_vvfast'] = df['volume'].rolling(period_vwma_vvfast).sum()
             df['vwma_vvfast'] = df['cv_sum_vvfast'] / df['volume_sum_vvfast']  # формируем VWMA very fast
-            df['vwma_vfast_color'] = df.apply((lambda x: 'green' if x['close'] > x['vwma_vvfast'] and x['vwma_vvfast'] > x['vwma_vfast'] else 'green' if x['close'] < x['vwma_vvfast'] and x['vwma_vvfast'] < x['vwma_vfast'] else 'grey'), axis=1)
+            df['vwma_vfast_color'] = df.apply((lambda x: 'green' if x['close'] > x['vwma_vvfast'] and x['vwma_vvfast'] > x['vwma_vfast'] else 'red' if x['close'] < x['vwma_vvfast'] and x['vwma_vvfast'] < x['vwma_vfast'] else 'grey'), axis=1)
             result_columns.append("vwma_vfast_color")
 
     if period_vwma_fast is not None:
