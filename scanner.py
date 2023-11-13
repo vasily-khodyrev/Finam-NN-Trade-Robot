@@ -27,13 +27,15 @@ class ISSSecurity:
                  boardId: str,
                  list_level: Optional[int] = 0,
                  underlying: Optional[str] = None,
-                 last_date: Optional[datetime.datetime] = None):
+                 last_date: Optional[datetime.datetime] = None,
+                 initial_margin: Optional[float] = None):
         self._ticker = ticker
         self._name = name
         self._boardId = boardId
         self._list_level = list_level
         self._underlying = underlying
         self._last_date = last_date
+        self._initial_margin = initial_margin
 
     def get_ticker(self) -> str:
         return self._ticker
@@ -55,6 +57,9 @@ class ISSSecurity:
 
     def get_last_date_str(self) -> Optional[str]:
         return self._last_date.strftime("%Y-%m-%d") if self._last_date is not None else None
+
+    def get_initial_margin(self) -> Optional[float]:
+        return self._initial_margin
 
     def __repr__(self) -> str:
         return f"ISSSecurity({self.get_ticker()}, {self.get_name()})"
@@ -281,7 +286,8 @@ async def get_moex_futures_securities(session: aiohttp.ClientSession,
             underlying = line["ASSETCODE"]
             if last_date > now_date and underlying in _filter:
                 underlying_futures = map_asset_futures.get(underlying, [])
-                underlying_futures.append(ISSSecurity(ticker, name, "FUT", underlying=underlying, last_date=last_date))
+                initial_margin = line["INITIALMARGIN"]
+                underlying_futures.append(ISSSecurity(ticker, name, "FUT", underlying=underlying, last_date=last_date, initial_margin=initial_margin))
                 map_asset_futures[underlying] = underlying_futures
 
     for und, futs in map_asset_futures.items():
@@ -292,7 +298,7 @@ async def get_moex_futures_securities(session: aiohttp.ClientSession,
                             reverse=False)
         current_futures = sorted_res[0]
         result.append(current_futures)
-        print(f"{current_futures.get_ticker()}: {current_futures.get_name()} - {current_futures.get_last_date_str()}")
+        print(f"{current_futures.get_ticker()}: {current_futures.get_name()} - {current_futures.get_last_date_str()} {current_futures.get_initial_margin()}")
     return result
 
 
@@ -305,7 +311,8 @@ def get_trend(vwma_fast: float, vwma_slow: float) -> Trend:
         return Trend.DOWN
 
 
-def get_change_trend(trend: Trend) -> Trend:
+def get_change_trend(trend: Trend, prev_trend: Trend) -> Trend:
+    #TODO: take into account prev_trend in case trend is CROSS
     if trend == Trend.UP:
         return Trend.CHG_UP
     if trend == Trend.DOWN:
@@ -351,14 +358,14 @@ def getClosestLevel(dataset: pd.DataFrame):
     lev_min = min(dist, key=lambda x: x[1])
     current_level = lev_min[0] if lev_min[1] < 0.0005 else ''
     # check current and previous levels
-    if current_level == '' and _hasPrevClose:
-        dist = [(x, abs(prev_close - dataset[x].iloc[-2]) / prev_close) for x in columns]
-        lev_min = min(dist, key=lambda x: x[1])
-        current_level = lev_min[0] if lev_min[1] < 0.0005 else ''
     if current_level == '':
         dist = [(x, (last_high - dataset[x].iloc[-1]) * (last_low - dataset[x].iloc[-1])) for x in columns]
         lev_min = min(dist, key=lambda x: x[1])
         current_level = lev_min[0] if lev_min[1] <= 0.0 else ''
+    if current_level == '' and _hasPrevClose:
+        dist = [(x, abs(prev_close - dataset[x].iloc[-2]) / prev_close) for x in columns]
+        lev_min = min(dist, key=lambda x: x[1])
+        current_level = lev_min[0] if lev_min[1] < 0.0005 else ''
     if current_level == '' and _hasPrevClose:
         dist = [(x, (prev_high - dataset[x].iloc[-2]) * (prev_low - dataset[x].iloc[-2])) for x in columns]
         lev_min = min(dist, key=lambda x: x[1])
@@ -378,7 +385,7 @@ def get_potential(dataset: pd.DataFrame, checkDownTrend: Optional[bool] = False)
             cur_trend = trend
             continue
         if trend != cur_trend:
-            cur_trend = cur_trend if count > 20 else get_change_trend(cur_trend)
+            cur_trend = cur_trend if count > 20 else get_change_trend(cur_trend, trend)
             break
 
     interest = False
@@ -409,10 +416,9 @@ def get_potential(dataset: pd.DataFrame, checkDownTrend: Optional[bool] = False)
         potential = (last_vwma_fast - last_close) / last_close * 100
     if checkDownTrend and isDownTrend(cur_trend) and last_vwma_fast < last_close:
         potential = (last_close - last_vwma_fast) / last_close * 100
-    if last_vwma_fast > last_vwma_slow >= last_close and (isUpTrend(vwma_fast_trend) or isUpTrend(vwma_slow_trend)):
+    if last_vwma_fast > last_vwma_slow >= last_close and isUpTrend(vwma_fast_trend):
         interest = True
-    if checkDownTrend and last_vwma_fast < last_vwma_slow < last_close and (
-            isDownTrend(vwma_fast_trend) or isDownTrend(vwma_slow_trend)):
+    if checkDownTrend and last_vwma_fast < last_vwma_slow < last_close and isDownTrend(vwma_fast_trend):
         interest = True
 
     closestLevel = getClosestLevel(dataset)
@@ -427,7 +433,7 @@ def get_potential_trend_change(dataset: pd.DataFrame):
     last_vwma_slow = last_rows["vwma_slow"].tolist()
     delta_fast = last_vwma_fast[1] - last_vwma_fast[0]
     delta_slow = last_vwma_slow[1] - last_vwma_slow[0]
-    if delta_fast > 0 and delta_fast * delta_slow > 0:
+    if delta_fast > 0 and delta_slow > 0:
         return Trend.UP
     if delta_fast < 0 < delta_fast * delta_slow:
         return Trend.DOWN
@@ -682,6 +688,7 @@ def print_scanner_results(description: str, results: List[ScannerResult], isFutu
     # Sorting max(potential) -> list level -> ticker
     reportable_results = sorted(reportable_results,
                                 key=lambda a: (
+                                    a.hasInterest(),
                                     a.get_max_potential(),
                                     a.get_security().get_list_level(),
                                     a.get_security().get_ticker()
@@ -767,7 +774,7 @@ async def futures_screen():
     async with aiohttp.ClientSession(connector=connector) as session:
         start = time.time()
         # securities = await get_moex_futures_securities(session, ["Si", "BR", "GOLD", "NG", "MIX", "RTS", "SILV"])
-        securities = await get_moex_futures_securities(session, ["Si", "BR", "GOLD", "NG"])
+        securities = await get_moex_futures_securities(session, ["Si", "BR", "GOLD", "NG", "MIX", "SBRF"])
         print(f"Found {len(securities)} tickers on MOEX")
         tasks = []
         for security in securities:
